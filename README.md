@@ -1,40 +1,44 @@
 # MGU Dashboard
 
-Data field Connect IQ pour montre Garmin qui affiche en direct les données de votre assistance électrique (moteur Pinion MGU) directement sur le poignet.
+A Connect IQ data field for Garmin watches that shows your e-bike assistance data (Pinion MGU motor) in real time, straight on your wrist.
 
-## Fonctionnalités
+## Features
 
-- Connexion automatique au vélo via Bluetooth Low Energy (service moteur UUID `0xFD6D`)
-- Affichage configurable : puissance cycliste (W), puissance moteur (W), cadence (rpm), mode d'assistance, batterie (%) et autonomie (km)
-- Grille d'affichage adaptative (1 à 3 colonnes), chaque métrique activable/désactivable
-- **Enregistrement FIT** : puissance, puissance moteur et cadence via les champs natifs Garmin (moyennes, tours, minima visibles dans Garmin Connect), plus assistance, batterie et autonomie
-- **Mode démo** : simule un vélo sans BLE pour tester l'affichage
-- Libellés multilingues (EN, FR, DE, IT)
+- Automatic connection to your bike over Bluetooth Low Energy (motor service UUID `0xFD6D`)
+- Configurable display: cyclist power (W), motor power (W), cadence (rpm), assist mode, battery (%) and range (km)
+- Adaptive display grid (1 to 3 columns), each metric can be turned on/off
+- **FIT recording**: cyclist power, motor power and cadence use Garmin's native fields (averages, laps, minimums recognized by Garmin Connect), plus assistance, battery and range
+- **Demo mode**: simulates a bike with no BLE, to test the display
+- Multilingual labels (EN, FR, DE, IT)
 
-## Installation sur la montre
+## Installing on your watch
 
-- **Téléphone** : Garmin Connect ▸ Connect IQ Store ▸ rechercher **MGU Dashboard** ▸ Installer
-- **Ordinateur** : connect.garmin.com ▸ Connect IQ Store ▸ Installer
+- **Phone**: Garmin Connect ▸ Connect IQ Store ▸ search **MGU Dashboard** ▸ Install
+- **Computer**: connect.garmin.com ▸ Connect IQ Store ▸ Install
 
-Puis ajoutez-le à une activité : **Écrans de données ▸ Ajouter ▸ Connect IQ ▸ MGU Dashboard**.
+Then add it to an activity: **Data Screens ▸ Add ▸ Connect IQ ▸ MGU Dashboard**.
 
-## Développement
+## Development
 
-Data field Connect IQ écrit en Monkey C (SDK Garmin Connect IQ).
+A Connect IQ data field written in Monkey C (Garmin Connect IQ SDK).
 
 ```
 monkeyc -d <device> -f monkey.jungle -o ebikedf.prg -y developer_key.der -w
 ```
 
-Les images/sorties de build (`bin/`, `*.iq`, `*.prg`, `*.debug.xml`) et les clés de développement (`*.pem`, `*.der`) sont exclues par `.gitignore`.
+Build outputs (`bin/`, `*.iq`, `*.prg`, `*.debug.xml`) and developer keys (`*.pem`, `*.der`) are excluded via `.gitignore`.
 
 ## Documentation
 
-- [Guide de démarrage rapide — FR](docs/QUICKSTART-FR.md)
 - [Quick Start Guide — EN](docs/QUICKSTART-EN.md)
-- [Protocole BLE (technique)](docs/PROTOCOL.md)
-- [Compilation](docs/BUILD.md)
+- [Guide de démarrage rapide — FR](docs/QUICKSTART-FR.md)
+- [BLE protocol (technical)](docs/PROTOCOL.md)
+- [Building](docs/BUILD.md)
 
-## Licence
+## License
 
-Voir le fichier [LICENSE](LICENSE).
+See the [LICENSE](LICENSE) file.
+
+---
+
+**[Français](README.fr.md)** — Version française du README.
