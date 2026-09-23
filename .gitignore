@@ -1,0 +1,21 @@
+# Connect IQ build artifacts
+bin/
+gen/
+mir/
+internal-mir/
+external-mir/
+*.iq
+*.prg
+*.debug.xml
+*fit_contributions.json
+*.mcgen
+
+# Developer signing keys — never commit these
+*.pem
+*.der
+*.key
+devkey*
+
+# OS junk
+Thumbs.db
+.DS_Store

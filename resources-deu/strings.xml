@@ -1,0 +1,31 @@
+<resources xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
+    <string id="AppName">MGU Dashboard</string>
+    <string id="Title">MGU Dashboard</string>
+    <string id="TitleDemo">MGU Demo</string>
+    <string id="CyclistPower">Fahrerleistung</string>
+    <string id="Cadence">Trittfrequenz</string>
+    <string id="Assistance">Unterstützung</string>
+    <string id="Battery">Akku</string>
+    <string id="Range">Reichweite</string>
+    <string id="AvgPower">Ø Leistung</string>
+    <string id="AvgCadence">Ø Trittfrequenz</string>
+    <string id="MinBattery">Min. Akku</string>
+    <string id="W">W</string>
+    <string id="Rpm">rpm</string>
+    <string id="Percent">%</string>
+    <string id="Km">km</string>
+    <string id="Scanning">Suche...</string>
+    <string id="Waiting">Warten...</string>
+    <string id="NothingSelected">Nichts ausgewählt</string>
+    <string id="Speed">Geschwindigkeit</string>
+    <string id="Power">Leistung</string>
+    <string id="Motor">Motor</string>
+    <string id="MotorPower">Motorleistung</string>
+    <string id="Mode">Modus</string>
+    <string id="Assist">Unterstützung</string>
+    <string id="DemoMode">Demo-Modus</string>
+    <string id="Labels">Beschriftungen</string>
+    <string id="Debug">Debug (Messwerte)</string>
+    <string id="AssistLevel">Unterstützungsstufe</string>
+    <string id="AssistOff">AUS</string>
+</resources>
