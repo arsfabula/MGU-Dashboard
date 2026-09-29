@@ -93,22 +93,33 @@ class EbikeDataField extends WatchUi.DataField {
         }
     }
 
+    //! Make sure the correct data source (demo vs BLE) matches the current
+    //! settings, switching if the user changed the mode while this field
+    //! instance was kept alive. Returns the current demo mode.
+    //!
+    //! The BLE manager is NOT created here, it is only borrowed from
+    //! BleManager.getShared(): this runs once per second from the draw path,
+    //! and building a manager there re-registered the GATT profiles. The
+    //! uncaught registerProfile() in its constructor is what killed this field
+    //! on an Edge 1030 — see docs/HANDOFF-NOUVELLE-SESSION.md.
     private function _ensureMode() as Boolean {
         var demoMode = EbikeConfig.isDemo();
+        var ble = _ble;
         if (demoMode) {
             if (_demo == null) {
                 _demo = new DemoManager(_model);
-                var ble = _ble;
-                if (ble != null) {
-                    ble.stop();
-                    _ble = null;
-                }
+            }
+            if (ble != null && ble.isActive()) {
+                ble.stop();
             }
         } else {
             _demo = null;
-            if (_ble == null) {
-                _ble = new BleManager(_model);
-                _ble.startScan();
+            if (ble == null) {
+                ble = BleManager.getShared(_model);
+                _ble = ble;
+            }
+            if (ble != null && !ble.isActive()) {
+                ble.startScan();
             }
         }
         return demoMode;
@@ -148,6 +159,13 @@ class EbikeDataField extends WatchUi.DataField {
         var h = safe[:h] as Number;
 
         var model = _model;
+        if (!demoMode && ble == null) {
+            //! The GATT profiles could not be registered and every retry is
+            //! spent (see BleManager.getShared). Say so instead of claiming
+            //! the app is still scanning.
+            dc.drawText(x + w / 2, y + h / 2, _stateFont(h), WatchUi.loadResource(Rez.Strings.BleError), Graphics.TEXT_JUSTIFY_CENTER);
+            return;
+        }
         if (!demoMode && !model.connected) {
             dc.drawText(x + w / 2, y + h / 2, _stateFont(h), WatchUi.loadResource(Rez.Strings.Scanning), Graphics.TEXT_JUSTIFY_CENTER);
             return;
@@ -689,10 +707,14 @@ class EbikeField extends Application.AppBase {
             _demo = new DemoManager(model);
             _ble = null;
         } else {
-            var ble = new BleManager(model);
+            //! getShared(), never new BleManager(): the GATT profiles are
+            //! registered once per run of the app and the failure is contained.
+            var ble = BleManager.getShared(model);
             _ble = ble;
             _demo = null;
-            ble.startScan();
+            if (ble != null) {
+                ble.startScan();
+            }
         }
     }
 
@@ -715,16 +737,20 @@ class EbikeField extends Application.AppBase {
                 demo = new DemoManager(model);
                 _demo = demo;
             }
+            //! Only stopped, never discarded: the shared manager keeps its
+            //! registered profiles, so leaving demo mode does not register
+            //! them a second time.
             var ble = _ble;
-            if (ble != null) {
+            if (ble != null && ble.isActive()) {
                 ble.stop();
-                _ble = null;
             }
         } else {
             var ble = _ble;
             if (ble == null) {
-                ble = new BleManager(model);
+                ble = BleManager.getShared(model);
                 _ble = ble;
+            }
+            if (ble != null && !ble.isActive()) {
                 ble.startScan();
             }
             _demo = null;

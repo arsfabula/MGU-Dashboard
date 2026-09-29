@@ -6,7 +6,10 @@ import Toybox.WatchUi;
 //! The app settings menu, shown directly when the user opens the
 //! on-device settings flow (activity settings -> Connect IQ Fields -> eBike).
 class EbikeSettingsMenu extends WatchUi.Menu2 {
-    private var _assistItem as WatchUi.MenuItem;
+    //! Nullable: the assist row is not added to the menu any more (see
+    //! initialize), so the reference stays null unless the two commented lines
+    //! are restored.
+    private var _assistItem as WatchUi.MenuItem?;
     private var _ble as BleManager? = null;
 
     public function initialize(ble as BleManager?) {
@@ -47,7 +50,10 @@ class EbikeSettingsMenu extends WatchUi.Menu2 {
         if (ble != null) {
             ble.setAssistLevel(next);
         }
-        _assistItem.setSubLabel(_assistLabel(next));
+        var item = _assistItem;
+        if (item != null) {
+            item.setSubLabel(_assistLabel(next));
+        }
         System.println("EbikeSettings: assist -> " + next.toString());
         WatchUi.requestUpdate();
     }

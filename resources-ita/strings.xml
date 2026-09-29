@@ -15,6 +15,7 @@
     <string id="Percent">%</string>
     <string id="Km">km</string>
     <string id="Scanning">Ricerca...</string>
+    <string id="BleError">BLE non disponibile</string>
     <string id="Waiting">In attesa...</string>
     <string id="NothingSelected">Nessuna selezione</string>
     <string id="Speed">Velocità</string>

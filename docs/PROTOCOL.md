@@ -52,6 +52,23 @@ Chaque caractéristique `0000000N` porte **un** type de message Sigma. Le data
 field enregistre un profil AD avec les 8 caractéristiques notify (CCCD) et
 sonde la présence de chaque `0000000N` après connexion (`_enableFd6dNotifications`).
 
+> **Enregistrement idempotent et non fatal.** Les profils GATT vivent dans une
+> table bornée de l'appareil et une app ne peut avoir qu'un delegate BLE :
+> `registerProfile()` sur les mêmes UUID une deuxième fois peut lever une
+> exception. Depuis le correctif du 2026-09-29 (crash ERA edge1030), tout passe
+> par `BleManager.getShared(model)` — un seul manager par exécution, une seule
+> inscription, exception contenue (3 tentatives espacées de 30 s) puis retour
+> `null` affiché comme « BLE indisponible ». Le profil lui-même est inchangé.
+>
+> Les **deux profils ne sont pas enregistrés au même risque** (`initialize()`) :
+> le profil **Sigma/AD est obligatoire** (son exception est fatale — toutes les
+> données passent par lui), le **profil legacy `5e8597aa` est « best effort »**
+> : s'il est refusé, `_legacyProfileOk = false`, aucun heartbeat n'est envoyé,
+> mais les données Sigma fonctionnent normalement. Sans cette séparation, un
+> appareil refusant la 2ᵉ définition perdait le profil principal — observé sur
+> un Edge Explore 2 fw 31.33 (ERA « System Error », 2026-09-25). Les 8
+> caractéristiques RX1..RX8 sont conservées.
+
 ### S.2 Correspondance RX1..RX8 ↔ messages Sigma
 
 Le mapping est corrélé sur le terrain : **RX1 = SIGMA_LIVE_RIDE_INFORMATION**,
@@ -235,6 +252,10 @@ découverte GATT : on enregistre **deux profils** — AD (FD6D, voir §S.1) et
 données (5e8597aa + RX/TX). En pratique les données ne remontent **que** sur
 FD6D (CCCD `5e8597ab` refusé, `st=18`).
 
+> Ce profil de données est enregistré en **best effort** (voir §S.1) : s'il est
+> refusé par l'appareil, `_legacyProfileOk = false`, les heartbeats TX ne sont
+> plus envoyés et le champ Sigma/FD6D continue de fonctionner normalement.
+
 ### A.2 Framing BCP (20 octets / trame)
 
 Toute trame fait **20 octets**, complétée par des zéros.
@@ -385,6 +406,9 @@ Sans lui, le changement restait en RAM et se perdait. Implémentation + layout :
 
 1. Scan BLE sur le service annoncé `0000fd6d-…` (le watch ne voit que lui en
    AD) ; match aussi `5e8597aa-…` au cas où.
+   Le manager est obtenu via `BleManager.getShared(model)` (§S.1) : s'il renvoie
+   `null` (profils non enregistrables, 3 tentatives épuisées) les étapes
+   2..7 n'ont pas lieu et le champ affiche « BLE indisponible ».
 2. `pairDevice(scanResult)` → appairage confirmé par l'utilisateur.
 3. Connexion : récupérer les services FD6D (profil AD) et `5e8597aa` (profil
    données, TX `5e8597ac` heartbeats).

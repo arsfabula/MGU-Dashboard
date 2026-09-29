@@ -20,6 +20,17 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     private const HB_OPERATIONAL = 5;
     private const HB_STOPPED = 4;
 
+    //! Position of the mandatory profile (Sigma/AD) in the _buildProfiles()
+    //! array — see initialize() for why it is treated differently.
+    private const PROFILE_INDEX_REQUIRED = 0;
+
+    //! Number of registration attempts before giving BLE up for this run of
+    //! the app, and the delay between two attempts. `static var` and not
+    //! `const`: a const is an instance field in Monkey C and is unreachable
+    //! from getShared(), which is a static method.
+    private static var _maxInitFailures as Number = 3;
+    private static var _initRetryMs as Number = 30000;
+
     //! Real stream: Sigma/FD6D service. 10 bytes on characteristic 00000001
     //! (RX1) = SIGMA_LIVE_RIDE_INFORMATION; 12 bytes on 00000003 (RX3) =
     //! SIGMA_LIVE_BATTERY_INFORMATION; RX2 (00000002, 10B) =
@@ -51,6 +62,24 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     //! field is built; update() is invoked per received frame (below), so
     //! activity recording continues even while the field page isn't displayed.
     private var _fit as EbikeFitContributor? = null;
+    //! False once stop() ran: the system keeps calling the delegate (there is
+    //! no way to unregister it), so every callback must ignore late traffic
+    //! instead of feeding a model nobody displays any more.
+    private var _active as Boolean = true;
+    //! False when the legacy BCP profile was refused by the device. The
+    //! heartbeats are then silently impossible (no TX characteristic), but the
+    //! Sigma stream is unaffected.
+    private var _legacyProfileOk as Boolean = true;
+
+    //! The one BLE manager per run of the app. GATT profiles live in a
+    //! bounded table on the device and an application can only have one
+    //! delegate, so building a second BleManager (a second registerProfile of
+    //! the same UUIDs) is what killed onUpdate on an Edge 1030 — see
+    //! getShared().
+    private static var _shared as BleManager? = null;
+    private static var _initFailures as Number = 0;
+    private static var _nextRetryAt as Number = 0;
+    private static var _lastNow as Number = 0;
 
     //! Serialized write queue: CIQ only allows one BLE request in flight at a
     //! time ("Operation already in Progress" otherwise). Entries are
@@ -59,19 +88,99 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     private var _writeBusy as Boolean = false;
     private var _pendingLog as String = "";
 
+    //! NOTE: this may throw (registerProfile fails when the device's GATT
+    //! profile table cannot take the definition) — hence the two-tier handling
+    //! below. Never call it directly; go through getShared(), which contains
+    //! the exception.
     public function initialize(model as EbikeData) {
         BleDelegate.initialize();
         _model = model;
         _sigma = new Sigma();
         var profiles = _buildProfiles();
         for (var i = 0; i < profiles.size(); i++) {
-            BluetoothLowEnergy.registerProfile(profiles[i]);
+            if (i == PROFILE_INDEX_REQUIRED) {
+                //! Mandatory: every decoded value (speed, power, battery,
+                //! assist) arrives through the Sigma/AD profile. If the device
+                //! refuses it there is nothing left to show, so let the
+                //! exception reach getShared(), which turns it into a
+                //! "BLE unavailable" field instead of a crash.
+                BluetoothLowEnergy.registerProfile(profiles[i]);
+            } else {
+                //! Best effort: the legacy service carries only the TX BCP
+                //! heartbeat. Losing it costs us the heartbeats, never the ride
+                //! data — reported on an Edge Explore 2 (fw 31.33, ERA
+                //! 2026-09-25) whose profile table refused the second
+                //! definition. Registering both in one loop made that device
+                //! lose the Sigma profile too.
+                try {
+                    BluetoothLowEnergy.registerProfile(profiles[i]);
+                } catch (ex) {
+                    _legacyProfileOk = false;
+                    _model.lastError = ex.getErrorMessage();
+                    System.println("BleManager: legacy profile exc " + ex.getErrorMessage());
+                }
+            }
         }
         BluetoothLowEnergy.setDelegate(self);
     }
 
+    //! The one BLE manager for this run of the app, or null when the GATT
+    //! profiles cannot be registered (device profile table full, BLE stack
+    //! busy, ...). Registration happens at most once, retries are bounded and
+    //! spaced, and the caller gets a null instead of an exception — a failure
+    //! here must degrade the data field to a "BLE unavailable" message, never
+    //! kill it.
+    public static function getShared(model as EbikeData) as BleManager? {
+        var shared = _shared;
+        if (shared != null) {
+            //! The app rebuilds the model in onStart; re-point the manager
+            //! instead of registering the profiles a second time.
+            shared.setModel(model);
+            return shared;
+        }
+        var now = System.getTimer();
+        if (now < _lastNow) {
+            //! System.getTimer() wraps around (~24.8 days of uptime). A stale
+            //! _nextRetryAt would then block every retry for weeks.
+            _nextRetryAt = 0;
+        }
+        _lastNow = now;
+        if (_initFailures >= _maxInitFailures || now < _nextRetryAt) {
+            return null;
+        }
+        try {
+            shared = new BleManager(model);
+            _shared = shared;
+            return shared;
+        } catch (ex) {
+            _initFailures += 1;
+            _nextRetryAt = now + _initRetryMs;
+            model.lastError = ex.getErrorMessage();
+            //! ERA reports the backtrace but never the message, so this line
+            //! is the only place the reason is ever written down.
+            System.println("BleManager: init exc " + ex.getErrorMessage());
+            return null;
+        }
+    }
+
+    public function isActive() as Boolean {
+        return _active;
+    }
+
+    //! The model lives in EbikeData, which the app rebuilds on every start.
+    public function setModel(model as EbikeData) as Void {
+        _model = model;
+    }
+
     public function startScan() as Void {
-        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
+        _active = true;
+        try {
+            BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
+        } catch (ex) {
+            _active = false;
+            _model.lastError = ex.getErrorMessage();
+            System.println("BleManager: scan exc " + ex.getErrorMessage());
+        }
     }
 
     //! Receives the FIT contributor so decoded frames can be recorded even
@@ -80,9 +189,24 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         _fit = fit;
     }
 
+    //! Stops the traffic. The manager object itself is kept (its profiles stay
+    //! registered and the delegate cannot be unregistered), so leaving demo
+    //! mode only restarts it through startScan() — it never registers twice.
     public function stop() as Void {
+        _active = false;
+        _model.connected = false;
+        _bootPending = false;
+        //! The bike expects the Stopped heartbeat, so it goes out before the
+        //! TX characteristic reference is dropped.
         _sendHeartbeat(HB_STOPPED);
-        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
+        _queueReset();
+        _txChar = null;
+        try {
+            BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
+        } catch (ex) {
+            _model.lastError = ex.getErrorMessage();
+            System.println("BleManager: stop exc " + ex.getErrorMessage());
+        }
     }
 
     private function _buildProfiles() as Array<Dictionary> {
@@ -141,9 +265,15 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     }
 
     public function onScanResults(scanResults as Iterator) as Void {
+        if (!_active) {
+            return;
+        }
         System.println("BleManager: scan");
         while (true) {
             try {
+                if (!_active) {
+                    break;
+                }
                 var result = scanResults.next();
                 if (result == null) {
                     break;
@@ -177,6 +307,9 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     }
 
     public function onConnectedStateChanged(device as BluetoothLowEnergy.Device, state as BluetoothLowEnergy.ConnectionState) as Void {
+        if (!_active) {
+            return;
+        }
         try {
             if (state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
                 System.println("BleManager: CONNECTED");
@@ -187,21 +320,28 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                     }
                 }
                 _queueReset();
-                var service = device.getService(SERVICE_UUID);
-                _model.serviceFound = (service != null);
-                if (service != null) {
-                    var tx = service.getCharacteristic(TX_UUID);
-                    var rx = service.getCharacteristic(RX_UUID);
-                    _txChar = tx;
-                    _model.rxCharFound = (rx != null);
-                    if (rx != null) {
-                        var cccd = rx.getDescriptor(BluetoothLowEnergy.cccdUuid());
-                        if (cccd != null) {
-                            _queueDescriptorWrite(cccd, [0x01, 0x00]b, "rxC");
-                        }
-                    }
+                if (!_legacyProfileOk) {
+                    //! Already known to be impossible, no point asking the
+                    //! device for a service whose profile was never registered.
+                    System.println("BleManager: legacy profile refused, no heartbeat");
+                    _model.serviceFound = false;
                 } else {
-                    System.println("BleManager: no 5e8597aa");
+                    var service = device.getService(SERVICE_UUID);
+                    _model.serviceFound = (service != null);
+                    if (service != null) {
+                        var tx = service.getCharacteristic(TX_UUID);
+                        var rx = service.getCharacteristic(RX_UUID);
+                        _txChar = tx;
+                        _model.rxCharFound = (rx != null);
+                        if (rx != null) {
+                            var cccd = rx.getDescriptor(BluetoothLowEnergy.cccdUuid());
+                            if (cccd != null) {
+                                _queueDescriptorWrite(cccd, [0x01, 0x00]b, "rxC");
+                            }
+                        }
+                    } else {
+                        System.println("BleManager: no 5e8597aa");
+                    }
                 }
                 // The stream actually arrives on the Sigma/FD6D service.
                 // Enable notifications on every 00000001..08 so we see vehicle
@@ -227,6 +367,9 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     }
 
     public function onCharacteristicChanged(characteristic as BluetoothLowEnergy.Characteristic, value as ByteArray) as Void {
+        if (!_active) {
+            return;
+        }
         try {
             var t = System.getTimer();
             // Real stream: Sigma/FD6D service. Tag the characteristic so
@@ -360,6 +503,9 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     }
 
     public function onCharacteristicWrite(characteristic as BluetoothLowEnergy.Characteristic, status as BluetoothLowEnergy.Status) as Void {
+        if (!_active) {
+            return;
+        }
         try {
             // Heartbeats fire constantly; only log failures to keep log size sane.
             if (status != BluetoothLowEnergy.STATUS_SUCCESS) {
@@ -373,6 +519,9 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     }
 
     public function onDescriptorWrite(descriptor as BluetoothLowEnergy.Descriptor, status as BluetoothLowEnergy.Status) as Void {
+        if (!_active) {
+            return;
+        }
         try {
             System.println("BleManager: desc " + _pendingLog + " st=" + status);
             _queueDone();
@@ -443,7 +592,7 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     }
 
     public function onTick() as Void {
-        if (!_model.connected) {
+        if (!_active || !_model.connected) {
             return;
         }
         var now = System.getTimer();

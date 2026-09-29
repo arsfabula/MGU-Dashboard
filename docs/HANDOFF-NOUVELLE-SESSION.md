@@ -182,23 +182,57 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
 
 ## 6. Pièges / points d'attention
 
-1. **Erreur typecheck stricte pré-existante** (`-l 2`) :
+1. **Un seul `BleManager` par exécution, et jamais depuis une vue** :
+   `BluetoothLowEnergy.registerProfile()` écrit dans une table de profils GATT
+   bornée de l'appareil, et une app ne peut avoir qu'un delegate BLE. Un
+   `new BleManager(...)` supplémentaire **re-enregistre les mêmes UUID** et
+   peut lever une exception — c'est ce qui a tué le data field sur un Edge 1030
+   (fw 13.81, ERA 2026-09-29, `BleManager.initialize` ← `EbikeField._ensureMode`
+   ← `onUpdate`), parce que `_ensureMode()` tournait dans le chemin de rendu.
+   Règle : passer par `BleManager.getShared(model)`, qui enregistre une seule
+   fois, contient l'exception, espace 3 tentatives de 30 s puis renvoie `null`.
+   Un `null` doit afficher `Rez.Strings.BleError`, jamais remonter. Les 3
+   anciens sites (`_ensureMode`, `onStart`, `getInitialView`) ont été corrigés.
+   Rappel Monkey C : un `private` n'est pas accessible depuis une méthode
+   `static` (crash du compilateur) — passer par un accesseur public.
+2. **Les 2 profils GATT ne s'enregistrent pas au même risque** :
+   `initialize()` traite le profil Sigma/AD (`PROFILE_INDEX_REQUIRED`) en
+   obligatoire — son exception remonte vers `getShared()` — et le profil legacy
+   BCP (`5e8597aa`, heartbeat TX) en « best effort » : un refus met
+   `_legacyProfileOk = false` et les données Sigma fonctionnent quand même.
+   Les deux étaient dans la même boucle, si bien qu'un appareil refusant la
+   2ᵉ définition perdait aussi le profil qui porte toutes les données — observé
+   sur un **Edge Explore 2 fw 31.33** (ERA « System Error », 2 occurrences le
+   2026-09-25, `initialize:68` ← `onStart:692`). Le profil Sigma/AD garde ses
+   **8 caractéristiques RX1..RX8** : rien n'a été réduit.
+3. **Une inscription peut aussi échouer sans lever** : `onProfileRegister` reçoit
+   un statut non nul et le log (`BleManager: prof FAIL st=…`), distinct de
+   l'exception. Les deux cas existent.
+4. **`stop()` ne détruit pas le manager** : il coupe le trafic (`_active = false`,
+   callbacks ignorés) mais garde l'objet et ses profils enregistrés ; revenir du
+   mode démo fait un `startScan()`, pas un nouvel enregistrement.
+5. **Erreur typecheck stricte (`-l 2`) corrigée le 2026-09-29** :
    `source/EbikeSettings.mc:9: Member '$.EbikeSettingsMenu._assistItem' may not
    be initialized but does not accept Null.`
    Cause : `_assistItem` déclaré non-nullable, seule affectation dans le code
-   commenté (ligne 27). Toléré car `monkeyC.typeCheckLevel: "Off"`. **Fix** :
-   déclarer `private var _assistItem as WatchUi.MenuItem?;` et gérer le null.
-2. **`Rez.Strings.X` est un ResourceId, pas une String** : tout affichage passe
+   commenté. Corrigé en `private var _assistItem as WatchUi.MenuItem?;` + garde
+   null dans `onAssistSelected`. Le build `-l 2` passe maintenant sur edge1030
+   et edgeexplore2 : à utiliser pour vérifier la nullabilité du nouveau code.
+6. **`Rez.Strings.X` est un ResourceId, pas une String** : tout affichage passe
    par `WatchUi.loadResource(Rez.Strings.X)`.
-3. **Localisation** : chaque fichier `resources-<lang>/strings.xml` doit
+7. **Localisation** : chaque fichier `resources-<lang>/strings.xml` doit
    déclarer **tous** les ids (même valeur que l'anglais), sinon
    « String id undefined for language ». Codes : `fre` (pas `fra`), `deu`, `ita`.
-4. **RX2 `d[9]` ≠ RX7 mode** : ne pas confondre le % d'assistance moteur (RX2)
+8. **RX2 `d[9]` ≠ RX7 mode** : ne pas confondre le % d'assistance moteur (RX2)
    avec le mode d'assistance (RX7). Le log RX2 le note `assistNN%`.
-5. **Trames de tailles fixes** : le dispatch teste `value.size()` (10/10/12/2) —
+9. **Trames de tailles fixes** : le dispatch teste `value.size()` (10/10/12/2) —
    une trame de taille inattendue est ignorée (mais loggée en hex).
-6. **Lire un fichier en entier avant de l'éditer** ; éviter les lectures
-   partielles parallèles (source d'incohérences dans une ancienne session).
+10. **Chaque `EbikeDataField` crée son `EbikeFitContributor`** (11 `createField`
+    liés à l'instance du champ, non mutualisables). Même famille de risque « table
+    qui se remplit » que BLE, mais aucun backtrace ERA ne pointe là : à
+    surveiller, pas à corriger dans l'immédiat.
+11. **Lire un fichier en entier avant de l'éditer** ; éviter les lectures
+    partielles parallèles (source d'incohérences dans une ancienne session).
 
 ---
 
@@ -212,3 +246,15 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
 - **2026-09-21** : vitesse → puissance moteur (RX2) ; mode d'assistance (RX7)
   décodé/affiché ; fonts de valeur agrandies ; RX2/RX5/RX7 validés terrain ;
   `docs/PROTOCOL.md` (§S.2-S.4) et les deux `QUICKSTART` mis à jour.
+- **2026-09-29** : 2 crashs ERA tierces corrigés —
+  (a) data field, **Edge 1030** fw 13.81, « Unhandled Exception » (1 occurrence),
+  `initialize:68` ← `_ensureMode:110` ← `onUpdate:118` ;
+  (b) **Edge Explore 2** fw 31.33, « System Error » (2 occurrences),
+  `initialize:68` ← `onStart:692` — même appel, premier enregistrement de
+  l'exécution, donc table GATT de l'appareil ou pile BLE en cause.
+  Correctifs : `BleManager` singleton via `getShared()`, exception contenue +
+  3 tentatives espacées, callbacks inertes après `stop()`, **profils Sigma/AD
+  obligatoire vs legacy BCP best effort**, état « BLE indisponible »
+  (`Rez.Strings.BleError`, 4 langues), `_assistItem` nullable. Le profil Sigma
+  garde ses **8 caractéristiques RX1..RX8** : rien n'a été réduit.
+  Non publié : la 0.0.4 du store reste vulnérable.
