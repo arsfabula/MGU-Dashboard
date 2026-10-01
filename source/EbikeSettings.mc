@@ -1,4 +1,5 @@
 import Toybox.Application;
+import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.System;
 import Toybox.WatchUi;
@@ -10,6 +11,7 @@ class EbikeSettingsMenu extends WatchUi.Menu2 {
     //! initialize), so the reference stays null unless the two commented lines
     //! are restored.
     private var _assistItem as WatchUi.MenuItem?;
+    private var _ftpItem as WatchUi.MenuItem;
     private var _ble as BleManager? = null;
 
     public function initialize(ble as BleManager?) {
@@ -17,18 +19,29 @@ class EbikeSettingsMenu extends WatchUi.Menu2 {
         _ble = ble;
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.DemoMode), null, $.CFG_KEY_DEMO, EbikeConfig.isDemo(), null));
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.Labels), null, $.CFG_KEY_LABELS, EbikeConfig.showLabels(), null));
-        addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.CyclistPower), null, $.CFG_KEY_METRIC_POWER, EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_POWER), null));
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.MotorPower), null, $.CFG_KEY_METRIC_MOTOR_POWER, EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_MOTOR_POWER), null));
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.Cadence), null, $.CFG_KEY_METRIC_CADENCE, EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_CADENCE), null));
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.Assistance), null, $.CFG_KEY_METRIC_ASSIST, EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_ASSIST), null));
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.Battery), null, $.CFG_KEY_METRIC_BATTERY, EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_BATTERY), null));
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.Range), null, $.CFG_KEY_METRIC_RANGE, EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_RANGE), null));
         addItem(new WatchUi.ToggleMenuItem(WatchUi.loadResource(Rez.Strings.Debug), null, $.CFG_KEY_DEBUG, EbikeConfig.isDebug(), null));
+        var ftpItem = new WatchUi.MenuItem(WatchUi.loadResource(Rez.Strings.Ftp), _ftpLabel(EbikeConfig.ftpOverride()), $.CFG_KEY_FTP, null);
+        _ftpItem = ftpItem;
+        addItem(ftpItem);
         //! Niveau d'assistance retiré du menu (fonctionnalité mise de côté).
         //! Le code (création de l'item, onAssistSelected, _assistLabel) est
         //! conservé : décommenter ces deux lignes pour le réactiver.
         //_assistItem = new WatchUi.MenuItem(WatchUi.loadResource(Rez.Strings.AssistLevel), _assistLabel(EbikeConfig.assistLevel()), "assist", null);
         //addItem(_assistItem);
+    }
+
+    //! "Auto" for level 0 (profile/FTP default resolved by the field),
+    //! otherwise the watts value.
+    public static function _ftpLabel(ftp as Number) as String {
+        if (ftp <= 0) {
+            return WatchUi.loadResource(Rez.Strings.FtpAuto);
+        }
+        return ftp.toString() + " " + WatchUi.loadResource(Rez.Strings.W);
     }
 
     //! "OFF" for level 0, otherwise the level number (1..4).
@@ -37,6 +50,29 @@ class EbikeSettingsMenu extends WatchUi.Menu2 {
             return WatchUi.loadResource(Rez.Strings.AssistOff);
         }
         return level.toString();
+    }
+
+    //! Pushes the FTP picker wheel with the current value pre-selected.
+    public function onFtpSelected() as Void {
+        var factory = new $.EbikeFtpPickerFactory();
+        var picker = new WatchUi.Picker({
+            :title => new WatchUi.Text({
+                :text => WatchUi.loadResource(Rez.Strings.Ftp),
+                :locX => WatchUi.LAYOUT_HALIGN_CENTER,
+                :locY => WatchUi.LAYOUT_VALIGN_CENTER,
+                :font => Graphics.FONT_MEDIUM,
+                :color => Graphics.COLOR_WHITE
+            }),
+            :pattern => [factory],
+            :defaults => [(EbikeConfig.ftpOverride() / 5).toNumber()]
+        });
+        WatchUi.pushView(picker, new $.EbikeFtpPickerDelegate(self), WatchUi.SLIDE_IMMEDIATE);
+    }
+
+    //! Updates the FTP row sublabel once a picker value is accepted.
+    public function onFtpChanged(current as Number) as Void {
+        _ftpItem.setSubLabel(_ftpLabel(current));
+        WatchUi.requestUpdate();
     }
 
     //! Cycles the assist level (OFF -> 1 -> 2 -> 3 -> 4 -> OFF), persists it,
@@ -72,7 +108,12 @@ class EbikeSettingsMenuDelegate extends WatchUi.Menu2InputDelegate {
         if (menuItem instanceof ToggleMenuItem) {
             Application.Storage.setValue(menuItem.getId() as String, menuItem.isEnabled());
         } else {
-            _menu.onAssistSelected();
+            var id = menuItem.getId();
+            if (id != null && id.equals($.CFG_KEY_FTP)) {
+                _menu.onFtpSelected();
+            } else {
+                _menu.onAssistSelected();
+            }
         }
     }
 }

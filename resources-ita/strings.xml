@@ -3,6 +3,8 @@
     <string id="Title">MGU Dashboard</string>
     <string id="TitleDemo">MGU Demo</string>
     <string id="CyclistPower">Potenza ciclista</string>
+    <string id="Ftp">FTP</string>
+    <string id="FtpAuto">Auto</string>
     <string id="Cadence">Cadenza</string>
     <string id="Assistance">Assistenza</string>
     <string id="Battery">Batteria</string>

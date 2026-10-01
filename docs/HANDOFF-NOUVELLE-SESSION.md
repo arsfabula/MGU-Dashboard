@@ -1,10 +1,15 @@
 # PASSATION — reprendre ce projet dans une NOUVELLE session opencode
 
-> **STATUT 2026-09-21.** Le data field Sigma/FD6D est **fonctionnel et validé
-> terrain**. Depuis la session précédente : la **vitesse a été retirée** et
-> remplacée par la **puissance moteur (RX2)** ; le **mode d'assistance (RX7)** est
-> décodé et affiché ; les **fonts de valeur** ont été agrandies. Les 4 cibles
-> (`venusq2`, `epix2pro42mm/47mm/51mm`) compilent : `BUILD SUCCESSFUL`.
+> **STATUT 2026-09-29.** Le data field Sigma/FD6D est **fonctionnel et validé
+> terrain**. Depuis la session précédente : la **puissance cycliste est passée en
+> jauge radiale** (arc concentrique épousant le **contour supérieur** de l'écran,
+> échelle 0→2×FTP, zones de couleur, aiguille, valeur centrée sous la calotte), avec
+> bandes fixes **Moteur/Cadence/Assistance** et **Batterie/Autonomie**, titre en bas.
+> Nouveau réglage **FTP** (sélecteur **Auto** / 60–400 W) ; l'échelle de la jauge suit
+> le FTP réglé, sinon le FTP du profil utilisateur (`getFunctionalThresholdPower`,
+> feature-gated, non exposé sur `venusq2`/`epix2pro42mm` → repli **200 W**). Le toggle
+> « CyclistPower » a disparu (la puissance est toujours affichée). Les 2 cibles
+> (`venusq2`, `epix2pro42mm`) compilent : `BUILD SUCCESSFUL` à `-l 0` **et** `-l 2`.
 >
 > Objectif de cette passation : permettre à une session neuve de continuer
 > **sans dépendre de la mémoire de la session précédente**. Lire ce doc en
@@ -23,7 +28,8 @@
   `resources-ita/`).
 - **Cibles** (`manifest.xml`) : `edgeexplore`, `epix2`, `epix2pro42mm`,
   `epix2pro47mm`, `epix2pro51mm`, `instinctcrossoveramoled`, `venusq2`.
-- **Permissions** : `BluetoothLowEnergy`, `FitContributor`.
+- **Permissions** : `BluetoothLowEnergy`, `FitContributor`, `UserProfile`
+  (`UserProfile` exigé par le typecheck dès qu'on touche à `Toybox.UserProfile`).
 - **Clé de signature** : `developer_key.der` (racine).
 - **Jungle** : `monkey.jungle` = `project.manifest = manifest.xml` (rien d'autre).
 
@@ -35,40 +41,89 @@
   -y developer_key.der -d venusq2 -l 0
 ```
 
-- `-l 0` = typecheck **Off** (réglage IDE utilisateur) → `BUILD SUCCESSFUL`.
-- `-l 2` = strict → **échoue sur UNE erreur pré-existante** (voir §6), sans lien
-  avec les évolutions récentes. Les cibles `epix2pro*` produisent des `.iq` dans
-  `bin/` ; le `.prg` de sideload est `bin\ebikedf.prg`.
+- `-l 0` et `-l 2` : `BUILD SUCCESSFUL` sur `venusq2` et `epix2pro42mm`
+  (vérifié le 2026-09-29 après ajout jauge + FTP).
+- Les cibles `epix2pro*` produisent des `.iq` dans `bin/` ; le `.prg` de
+  sideload est `bin\ebikedf.prg`.
 
 ---
 
 ## 2. État fonctionnel actuel
 
-### Métriques affichées (ordre de `_collectMetrics`, `EbikeField.mc`)
+### Agencement écran (`_drawMetrics`, `EbikeField.mc`) — depuis 2026-09-29
 
-| Ordre | Métrique | Source | Clé de config | Unités |
+Bandes fixes, de haut en bas :
+
+1. **Jauge radiale de puissance** (toujours affichée) : **calotte d'arc
+   concentrique au cercle de l'écran** (même centre, rayon
+   `min(l,h)/2 - bw/2`, épaisseur `bw = 21`) : l'arc est **concentrique à
+   l'écran**, donc son zénith EST le haut du cercle visible → il **touche le bord
+   supérieur** (champ = écran pour un data field pleine page), **sans clamp
+   `safe.top`**. Calotte **10 h → 14 h** : `θ = 60°` (`a1 = 150°` = 10 h à
+   gauche, `a0 = 30°` = 14 h à droite), `f = 0` (0 W) à gauche,
+   `f = 1` (2·FTP) à droite, **FTP au zénith** (SDK : 0°=est, 90°=zénith).
+   Tracé : `angle(f) = a1 - 2θ·f`, `drawArc(..., ARC_CLOCKWISE, angle(fLo),
+   angle(fHi))` (⚠️ le sens est **inversé** par rapport à la version précédente :
+   `ARC_CLOCKWISE` depuis `a1`, sinon les zones et l'aiguille sortent à l'envers).
+   θ plancher à **55°** (l'adaptatif ne se déclenche plus en pratique).
+   **7 segments de largeur ÉGALE** (2/7 de FTP chacun), gauche→droite :
+   `gris` (`COLOR_LT_GRAY`), `bleu clair`, `vert clair`, **`jaune` (FTP centré)**,
+   `orange`, `rouge`, **`violet`** (`COLOR_PURPLE`). Plus d'encoche FTP.
+   **Aiguille en moignon radial** (segment `r-29..r-8`, pen 6) en couleur `fg`
+   pointant `model.powerW` (bornée à [0, 2·FTP]) ; **valeur centrée** sous la
+   corde de la calotte. Rendu par `drawArc` + `setPenWidth` (le SDK 9.2 **n'a
+   pas** `fillArc`).
+2. **Bande Moteur / Cadence / Assistance** : cellules égales (toggles §menu).
+3. **Bande Batterie / Autonomie** : idem.
+4. **Titre** (nom du vélo, « MGU Demo » en démo) en **pied**, **descendu dans
+   l'arc bas** (`titleY = max(yTitle, fh - titleH - 2)`) : c'est une bande
+   étroite et centrée, donc elle tient là où les bandes larges ne tiennent pas
+   (coins ronds) ; largeur bornée à la **corde du cercle** à cette hauteur
+   (nom de vélo trop long → troncature `...`).
+
+Sacrifices si hauteur insuffisante : titre, puis bande du bas ; la jauge garde
+toujours sa place (min 72 px, `MIN_GAUGE_H`). Hauteur de bande secondaire :
+`_rowBandH` renvoie `maxH + labelH + **8**` (et non +2) — sinon `_drawCell`
+re-fit avec `availH = h-6` rejette la plus grande fonte et chaque cellule
+secondaire perd **un cran**.
+
+| Bande | Métrique | Source | Clé de config | Unités |
 |---|---|---|---|---|
-| 1 | **Power** (cycliste) | RX1 `u16(6)` | `CFG_KEY_METRIC_POWER` | W |
 | 2 | **Motor** (moteur) | RX2 `u16(0)` | `CFG_KEY_METRIC_MOTOR_POWER` | W |
-| 3 | **Cadence** | RX1 `d[9]` | `CFG_KEY_METRIC_CADENCE` | rpm |
-| 4 | **Assist** (mode) | RX7 `d[0]` | `CFG_KEY_METRIC_ASSIST` | (aucune) |
-| 5 | **Battery** | RX3 `d[0]` | `CFG_KEY_METRIC_BATTERY` | % |
-| 6 | **Range** (autonomie) | RX3 `u16(6)` | `CFG_KEY_METRIC_RANGE` | km |
+| 2 | **Cadence** | RX1 `d[9]` | `CFG_KEY_METRIC_CADENCE` | rpm |
+| 2 | **Assist** (mode) | RX7 `d[0]` | `CFG_KEY_METRIC_ASSIST` | (aucune) |
+| 3 | **Battery** | RX3 `d[0]` | `CFG_KEY_METRIC_BATTERY` | % |
+| 3 | **Range** (autonomie) | RX3 `u16(6)` | `CFG_KEY_METRIC_RANGE` | km |
 
 - **La vitesse n'est plus affichée** (métrique « Speed » retirée). `RX1 Speed`
   reste **décodé** dans `model.speedKmh` (démo / log), mais aucun affichage.
 - État « **En attente…** » : `!demoMode && model.batterySoc == null &&
-  timer - lastUpdate > 10000` (`EbikeField.mc:148`).
-- **Fonts** : `_fitValueFont` (`EbikeField.mc:524`) = échelle **order-indépendante
+  timer - lastUpdate > 10000` (début du chemin de rendu `onUpdate`).
+- **FTP** : `_resolveFtp()` = réglage (`ftpOverride()` > 0) → sinon FTP du profil
+  (`_readProfileFtp`, feature-gated + try/catch + `instanceof Number`, cache
+  `_profileFtp`) → sinon **200 W**.
+- **Fonts** : `_fitValueFont` (`EbikeField.mc`) = échelle **order-indépendante
   du plus grand font qui rentre** : candidats `FONT_NUMBER_HOT/MILD/MEDIUM` puis
   `FONT_LARGE/MEDIUM/SMALL/XTINY`. `_fontLetter` mappe le font retenu.
   ⚠️ Le SDK n'expose **pas** de `FONT_NUMBER_THIN_HUGE/LARGE` — ne pas en inventer.
+- ⚠️ **Invocation de classe depuis la jauge** : le fit de la valeur est calculé
+  dans `_drawMetrics` puis **passé en paramètre** à `_drawPowerGauge(...,
+  gfit)` (9ᵉ paramètre). Ne pas réintroduire un appel `_fitValueFont` DANS la
+  jauge : sur le **simulateur**, le VM émet un **« Stack Overflow » / Failed
+  invoking \<symbol\>** à l'**entrée** de `_fitValueFont` quand celle-ci est
+  invoquée depuis le cadre `_drawPowerGauge` (8 paramètres dont `Dc`+
+  `EbikeData`+`Dictionary`), alors que la même invocation depuis `_drawMetrics`
+  / `_rowBandH` fonctionne. Diagnostic 2026-09-29 via `monkeydo` : print d'entrée
+  jamais atteint, crash avant le corps de la fonction.
 
 ### Menu réglages (`EbikeSettings.mc`)
 
-Toggles : Demo, Libellés, CyclistPower, **MotorPower**, Cadence, Assistance,
-Battery, Range, Debug. Le **niveau d'assistance est retiré du menu** (lignes
-24-28 commentées, code conservé : `onAssistSelected`, `_assistLabel`,
+Toggles : Demo, Libellés, **MotorPower**, Cadence, Assistance, Battery, Range,
+Debug (le toggle **CyclistPower a disparu** : la jauge l'affiche toujours).
+Item **FTP** : `MenuItem` id `CFG_KEY_FTP`, sous-libellé « Auto » ou « NN W »,
+ouvre un `WatchUi.Picker` (81 items = 0..400 W par pas de 5, `0` = **Auto**) —
+voir `EbikeFtpPicker.mc`. Le **niveau d'assistance est retiré du menu** (lignes
+commentées, code conservé : `onAssistSelected`, `_assistLabel`,
 `CFG_KEY_ASSIST_LEVEL`, `BleManager.setAssistLevel`).
 
 ### FIT (`fitcontributions.xml` + `EbikeFitContributor.mc`)
@@ -144,8 +199,13 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
   helpers `_decoded*`, `setAssistLevel` (assistance archivée).
 - `Sigma.mc` — parseurs `parseRide` / `parseMotor` / `parseBattery` / `parseAssist`.
 - `EbikeData.mc` — modèle partagé (`_model`).
-- `EbikeConfig.mc` — clés de stockage + accès.
+- `EbikeConfig.mc` — clés de stockage + accès (`ftpOverride()`).
 - `EbikeSettings.mc` — menu réglages (Menu2) + delegate.
+- `EbikeFtpPicker.mc` — roue de sélection FTP (`PickerFactory` + `PickerDelegate`).
+  ⚠️ **fond du `Picker` = NOIR, texte = BLANC** (comme l'échantillon SDK
+  `samples/Picker`, qui force `COLOR_WHITE` + `dc.clear()` noir). Un
+  `COLOR_BLACK` sur le titre/les items rend la roue **vide à l'écran** (texte
+  noir sur fond noir) → corrigé 2026-09-29.
 - `EbikeFitContributor.mc` — champs FIT.
 - `DemoManager.mc` — données simulées (`motorPowerW`, `assistMode` cyclique 1..4).
 
@@ -173,10 +233,20 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
    moyennes gated à 1 Hz, voir §FIT. Reste à valider sur le terrain + confirmer
    que `onTimer*` arrive page cachée.
 5. **RX4/RX6/RX8** : jamais vus ; restent loggés bruts.
-6. **Erreur typecheck stricte** (§6) : passer `_assistItem` en nullable pour un
-   build `-l 2` propre.
+6. ~~**Erreur typecheck stricte (`-l 2`)**~~ : **fait** — `_assistItem` nullable
+   (2026-09-29), + cette session la jauge/FTP compilent en `-l 2` sur
+   `venusq2` et `epix2pro42mm`.
 7. **`Speed` string** et `CFG_KEY_ASSIST_LEVEL`/`assistLevel()` : reliquats
    inutilisés, sans effet — à nettoyer si on veut.
+8. **FTP « Auto » sur appareils non supportés** : `getFunctionalThresholdPower`
+   n'est documenté que sur fenix 8, Venu 4/X1, FR 570/970, Edge 8xx/5xx, Enduro 3,
+   vivoactive 6, D2 Mach 2 Pro — pas `venusq2` ni `epix2pro*`. Le repli 200 W
+   s'applique ; à valider terrain (la jauge reste lisible).
+9. **Jauge au contour supérieur** : arc concentrique à l'écran, couronne calée
+   sous `safe.top`. Corrigé le 2026-09-29 (fit de valeur sorti de la jauge, voir
+   §6.3) ; rendu vérifié sur le simulateur (plusieurs frames sans crash).
+   Vérifier le rendu épix2pro42mm (dégagement de la lunette,
+   aiguille en moignon lisible) sur simulateur/terrain.
 
 ---
 
@@ -233,6 +303,30 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
     surveiller, pas à corriger dans l'immédiat.
 11. **Lire un fichier en entier avant de l'éditer** ; éviter les lectures
     partielles parallèles (source d'incohérences dans une ancienne session).
+12. **`UserProfile` exige la permission (manifest)** : dès qu'on utilise
+    `Toybox.UserProfile`, ajouter `<iq:uses-permission id="UserProfile"/>`
+    (le typecheck `-l 2` le refuse sinon). `getFunctionalThresholdPower` est
+    feature-gated (`UserProfile has :getFunctionalThresholdPower`) + try/catch +
+    `instanceof Number` : nécessaire car l'API n'est pas exposée sur toutes les
+    cibles au runtime, même si elle compile partout (`api.mir`).
+13. **`WatchUi.PickerFactory` : signatures à respecter exactement** —
+    `getValue(item) as Object or Null` et `getDrawable(item, isSelected) as
+    Drawable or Null` (pas `Number`/`Drawable`) : `-l 2` refuse l'override sinon
+    (« Cannot override ... with a different return type »). `WatchUi.NumberPicker`
+    ne convient pas aux watts (modes figés : poids/distance/temps…) — utiliser
+    `Picker` + `PickerFactory`, `:defaults => [valeur/5]`.
+14. **Simulateur : le BLE n'existe pas** — avec le mode démo OFF, un data field
+    BLE **crash à `onStart`** (`BleManager.getShared:152`, `new BleManager`)
+    en **« Symbol Not Found »** (natif `registerProfile` absent du sim, **non
+    interceptable** par try/catch) : champ blanc + « app crashed ». Sur le sim :
+    **activer le Mode démo**. Sur la montre réelle : aucun problème.
+15. **Simulateur : « Stack Overflow » au rendu corrigé le 2026-09-29** — l'écran
+    blanc en démo était un crash VM du sim (voir §2) : `_fitValueFont` invoquée
+    depuis `_drawPowerGauge` → à l'entrée de la fonction, « Stack Overflow /
+    Failed invoking <symbol> » (cadre `onUpdate:226←_drawMetrics←
+    _drawPowerGauge`). Fix structurel : le fit est calculé dans `_drawMetrics`
+    (mêmes appels, ça passe) et passé en paramètre à la jauge. Ne pas remettre
+    d'appel de classe dans `_drawPowerGauge`.
 
 ---
 
@@ -258,3 +352,58 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
   (`Rez.Strings.BleError`, 4 langues), `_assistItem` nullable. Le profil Sigma
   garde ses **8 caractéristiques RX1..RX8** : rien n'a été réduit.
   Non publié : la 0.0.4 du store reste vulnérable.
+- **2026-09-29** : jauge radiale de puissance + réglage FTP. Nouvelles bandes
+  (jauge, Moteur/Cadence/Assistance, Batterie/Autonomie, titre en bas) ;
+  `EbikeFtpPicker.mc` (roue Auto/60–400 W par pas de 5) ; `CFG_KEY_FTP`/
+  `ftpOverride()` ; repli FTP : réglage > profil (`getFunctionalThresholdPower`
+  feature-gated, cache `_profileFtp`) > 200 W ; suppression du toggle
+  CyclistPower (`CFG_KEY_METRIC_POWER`) ; permission `UserProfile` ; docs FR/EN
+  mises à jour. Build `-l 0` et `-l 2` OK sur `venusq2` + `epix2pro42mm`.
+- **2026-09-29 (suite)** : **écran blanc simulateur corrigé**. Cause identifiée
+  via `monkeydo`/log sim : **« Stack Overflow » du VM à l'entrée de
+  `_fitValueFont`** quand invoquée depuis `_drawPowerGauge` (crash
+  `onUpdate:226←_drawMetrics:351←_drawPowerGauge:453←_fitValueFont:585`,
+  part 006-B4314-00 FW 23.16, API 5.2.0 — le slot epix2pro42mm de l'utilisateur).
+  Fix : `_drawMetrics` calcule le fit et le passe à la jauge (9ᵉ paramètre,
+  `gfit`) ; vérifié sur le sim : plusieurs frames successives sans crash (démo
+  forceé). `Math.acos` non en cause (jamais atteint). Piège sim #14 (BLE OFF)
+  documenté : slot venusq2 avec démo OFF → crash `getShared` fatal (hors champ
+  du bug).
+- **2026-09-29 (fin de soirée)** : jauge retouchée selon le rendu simulateur —
+  (1) **colle au bord** : bord externe du trait à `y=0` (`r = screenR - bw/2`,
+  `bw` 9→14, plus d'anneau underlay), couronne à `safe.top` sur écrans ronds
+  sans double-décote (`scy - top - bw/2`, et non `scy - safe.y - top` ;
+  `safe.y` vaut déjà `top`) ; (2) **couleurs** : rampe 7 zones
+  `BLEU/BLEU_FONCÉ/VERT_FONCÉ/VERT/YELLOW/ORANGE/RED` (0–0.40/0.40–0.70/
+  0.70–0.85/0.85–1.15/1.15–1.40/1.40–1.70/1.70–2.00), le bleu n'occupe plus
+  55 % de l'arc, FTP centré dans l'apex vert ; (3) **encoche FTP supprimée**
+  (l'apex vert suffit, un trait central faisait « bug ») ; aiguille `r-22..r-8`
+  pen 4 (→ `r-29..r-8` pen 6 le 2026-10-01, +50 % / +50 %). ⚠️ `COLOR_LT_BLUE`/`COLOR_LT_GREEN` **n'existent pas** en CIQ —
+  palette réelle vérifiée dans `api.mir` : `COLOR_BLUE`/`COLOR_DK_BLUE`/
+  `COLOR_DK_GREEN`/`COLOR_GREEN`/`COLOR_YELLOW`/`COLOR_ORANGE`/`COLOR_RED`.
+  Build `-l 2` OK sur `venusq2` + `epix2pro42mm`, rendu vérifié sur le sim
+  (démo ON, 45 s sans crash).
+- **2026-09-29 (nuit)** : 5 corrections de retour utilisateur — (1) **couleurs**
+  → ramp `gris / bleu clair / vert clair / jaune / orange / rouge / violet`
+  (`LT_GRAY`, `BLUE`, `GREEN`, `YELLOW`, `ORANGE`, `RED`, `PURPLE` — tous
+  vérifiés dans `api.mir`), bornes 0–0.40/0.40–0.70/0.70–0.85/0.85–1.15/
+  1.15–1.40/1.40–1.70/1.70–2.00 (jaune au zénith) ; (2) **arc collé au bord
+  haut** : clamp couronne `safe.top` **supprimé** (l'arc est concentrique au
+  cercle d'écran, son zénith EST le bord visible) ; (3) **titre descendu** dans
+  l'arc bas avec largeur bornée à la corde du cercle ; (4) **fonte secondaire
+  +1 cran** : `_rowBandH` renvoie `+8` au lieu de `+2` (sinon `_drawCell`
+  re-fit à `h-6` et rejette la plus grande fonte) ; (5) **picker FTP vide** :
+  cause = `COLOR_BLACK` sur fond de `Picker` **noir** → texte invisible,
+  `COLOR_WHITE` (titre + items). Build `-l 2` OK, run sim sans crash.
+- **2026-09-29 (nuit, v2 jauge)** : retour simulateur — (1) **sens inversé** :
+  zones et aiguille sortaient à l'envers (gris à droite, aiguille basse à
+  droite). Corrigé en **miroir** : `angle(f) = a1 - 2θ·f` (f=0 → gauche) +
+  `drawArc(..., ARC_CLOCKWISE, ...)` (au lieu de `ARC_COUNTER_CLOCKWISE`
+  depuis `a0`) ; aiguille sur la même formule. (2) **épaisseur** : `bw` 14 → **21**
+  (≈ +50 %). (3) **angle** : `θ` 61° → **60°** = exactement **10 h → 14 h**
+  (`a1`=150°=10 h, `a0`=30°=14 h), plancher 35° → **55°** pour que la calotte
+  10 h–14 h reste garantie. (4) **segments égaux** : les 7 zones font désormais
+  2/7 de FTP chacune (avant : vert 0.15 trop petit, gris 0.40 trop large) ;
+  tableau `zoneColors[]` indexé 0..6 au lieu d'un tableau de dictionnaires.
+  `a0` supprimé (gisant). Build `-l 2` OK `venusq2` + `epix2pro42mm`, run sim
+  sans crash.

@@ -1,8 +1,10 @@
+import Toybox.Activity;
 import Toybox.Application;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.Math;
 import Toybox.System;
+import Toybox.UserProfile;
 import Toybox.WatchUi;
 
 class EbikeDataField extends WatchUi.DataField {
@@ -11,6 +13,12 @@ class EbikeDataField extends WatchUi.DataField {
     private var _demo as DemoManager?;
     private var _fit as EbikeFitContributor?;
     private var _lastValueFont as FontType;
+    //! Absolute minimum arc+value band height in px, below which the gauge
+    //! would be too cramped to read. Rows are sacrificed before it.
+    private const MIN_GAUGE_H = 72;
+    //! User profile FTP read once per session (null until attempted / when the
+    //! API is not exposed on this device).
+    private var _profileFtp as Number? = null;
     //! Last assist level sent to the bike, and whether we were connected, so a
     //! change in the setting (or a new connection) triggers a write.
     private var _lastAssistSent as Number? = null;
@@ -29,6 +37,46 @@ class EbikeDataField extends WatchUi.DataField {
             ble.setFitContributor(fit);
         }
         _lastValueFont = Graphics.FONT_XTINY;
+    }
+
+    //! Best available rider FTP in watts for the gauge scale: the explicit
+    //! on-device setting if set (> 0), otherwise the user profile's cycling
+    //! FTP when the API is exposed, otherwise 200 W. The profile read is
+    //! cached per session; the setting is re-read every draw (it changes only
+    //! through the settings menu, but the field may stay alive across pages).
+    private function _resolveFtp() as Number {
+        var override = EbikeConfig.ftpOverride();
+        if (override > 0) {
+            return override;
+        }
+        var profile = _profileFtp;
+        if (profile == null) {
+            profile = _readProfileFtp();
+            _profileFtp = profile;
+        }
+        if (profile != null && profile > 0) {
+            return profile;
+        }
+        return 200;
+    }
+
+    //! Reads the cyclist FTP from the connected user profile. Feature-gated:
+    //! getFunctionalThresholdPower is only exposed from API level 5.2.2 on a
+    //! subset of devices (fenix 8, Venu 4/X1, FR 970/570, Edge 8xx...), so on
+    //! older bodies this stays null and the caller falls back to 200 W.
+    private function _readProfileFtp() as Number? {
+        if (!(UserProfile has :getFunctionalThresholdPower)) {
+            return null;
+        }
+        try {
+            var ftp = UserProfile.getFunctionalThresholdPower(Activity.SPORT_CYCLING);
+            if (ftp instanceof Number) {
+                return ftp as Number;
+            }
+        } catch (ex) {
+            System.println("EbikeField: FTP profile read failed");
+        }
+        return null;
     }
 
     //! Make sure the correct data source (demo vs BLE) matches the current
@@ -175,7 +223,7 @@ class EbikeDataField extends WatchUi.DataField {
             return;
         }
 
-        _drawMetrics(dc, model, safe);
+        _drawMetrics(dc, model, safe, fg);
     }
 
     //! Inset each edge that is cut by the (non-rectangular) screen shape so
@@ -267,279 +315,289 @@ class EbikeDataField extends WatchUi.DataField {
         return Graphics.FONT_XTINY;
     }
 
-    private function _drawMetrics(dc as Dc, model as EbikeData, safe as Dictionary) as Void {
-        var showLabels = EbikeConfig.showLabels();
-        var metrics = _collectMetrics(model);
+    private function _drawMetrics(dc as Dc, model as EbikeData, safe as Dictionary, fg as ColorType) as Void {
         var x = safe[:x] as Number;
         var y = safe[:y] as Number;
         var w = safe[:w] as Number;
         var h = safe[:h] as Number;
-        var flags = safe[:flags] as Number;
+        var showLabels = EbikeConfig.showLabels();
+        var ftp = _resolveFtp();
 
-        var n = metrics.size();
-        if (n == 0) {
-            dc.drawText(x + w / 2, y + h / 2, _stateFont(h), WatchUi.loadResource(Rez.Strings.NothingSelected), Graphics.TEXT_JUSTIFY_CENTER);
-            return;
+        var row2 = _collectRow2(model);
+        var row3 = _collectRow3(model);
+
+        var titleH = _titleHeight(w, h);
+        var row2H = _rowBandH(dc, row2, w, showLabels);
+        var row3H = _rowBandH(dc, row3, w, showLabels);
+
+        // The gauge always keeps its spot; sacrifice the title first, then the
+        // last row, so the power arc never has to shrink below legibility.
+        var gaugeH = h - titleH - row2H - row3H;
+        if (gaugeH < MIN_GAUGE_H) {
+            titleH = 0;
+            gaugeH = h - row2H - row3H;
+        }
+        if (gaugeH < MIN_GAUGE_H) {
+            row3H = 0;
+            gaugeH = h - row2H;
         }
 
-        var minCellH = _minCellHeight(showLabels);
-        var circle = _inferCircle(dc, flags);
+        var yTitle = y + h - titleH;
+        var yRow3 = yTitle - row3H;
+        var yRow2 = yRow3 - row2H;
 
-        // The title is sacrificed before the data: evaluate both the titled and
-        // the untitled layout and keep whichever shows the most metrics (ties
-        // go to the layout with the roomier cells).
-        var best = _bestLayout(dc, metrics, x, y, w, h, showLabels, minCellH, circle);
-
-        var titleH = best[:titleH] as Number;
-        var effW = best[:effW] as Number;
-        var grid = best[:grid] as Dictionary;
-        var k = best[:k] as Number;
-        var gridX = x + (w - effW) / 2;
-        var cols = grid[:cols] as Number;
-        var cellW = grid[:cellW] as Number;
-        var cellH = grid[:cellH] as Number;
+        // The gauge is anchored to the whole screen (it rides the upper
+        // contour), so it gets the absolute band from the field top to row 2.
+        // NB: the value fit is computed here, not inside the gauge: invoking a
+        // class method from that 8-arg drawing frame crashes the simulator VM.
+        var gfit = _fitValueFont(dc, _fmt0(model.powerW), WatchUi.loadResource(Rez.Strings.W), w, yRow2 - y, showLabels);
+        _drawPowerGauge(dc, model, safe, y, yRow2 - y, ftp, fg, showLabels, gfit);
+        _drawValueRow(dc, row2, x, yRow2, w, row2H, showLabels);
+        _drawValueRow(dc, row3, x, yRow3, w, row3H, showLabels);
 
         if (titleH > 0) {
+            // The title is a narrow, centered strip, so it can sit lower than
+            // the rows: push it down into the round bottom arc (the wide rows
+            // must stay in the safe rect because they would clip there).
+            var fh = dc.getHeight();
+            var titleY = yTitle;
+            var lowY = fh - titleH - 2;
+            if (lowY > titleY) {
+                titleY = lowY;
+            }
+            // Width available at that height is the circle's chord, so a long
+            // bike name truncates instead of running off the glass.
+            var titleMaxW = w - 4;
+            if ((safe[:flags] as Number) != 0) {
+                var sr = (dc.getWidth() < fh ? dc.getWidth() : fh) / 2;
+                var dy = (titleY + titleH / 2) - fh / 2;
+                if (sr * sr > dy * dy) {
+                    var half = Math.sqrt((sr * sr - dy * dy).toFloat()).toNumber();
+                    if (half * 2 - 8 < titleMaxW) {
+                        titleMaxW = half * 2 - 8;
+                    }
+                }
+            }
+
             var title = WatchUi.loadResource(Rez.Strings.Title);
             if (EbikeConfig.isDemo()) {
                 title = WatchUi.loadResource(Rez.Strings.TitleDemo);
             } else {
                 var bikeName = model.bikeName;
                 if (bikeName != null && bikeName.length() > 0) {
-                    title = _fitTitle(dc, bikeName, w - 4);
+                    title = _fitTitle(dc, bikeName, titleMaxW);
                 }
             }
-            dc.drawText(x + w / 2, y + 2, Graphics.FONT_XTINY, title, Graphics.TEXT_JUSTIFY_CENTER);
-        }
-
-        for (var i = 0; i < k; i++) {
-            var metric = metrics[i] as Dictionary;
-            var col = i % cols;
-            var row = i / cols;
-            _drawCell(dc, gridX + col * cellW, y + titleH + row * cellH, cellW, cellH,
-                metric[:label] as String, metric[:value] as String, metric[:unit] as String, showLabels);
+            dc.drawText(x + w / 2, titleY + 1, Graphics.FONT_XTINY, title, Graphics.TEXT_JUSTIFY_CENTER);
         }
 
         if (EbikeConfig.isDebug()) {
-            for (var i = 0; i < k; i++) {
-                var col = i % cols;
-                var row = i / cols;
-                dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-                dc.drawRectangle(gridX + col * cellW, y + titleH + row * cellH, cellW, cellH);
-            }
             dc.setColor(Graphics.COLOR_BLUE, Graphics.COLOR_TRANSPARENT);
             dc.drawRectangle(x, y, w, h);
-            _printDebugInfo(dc.getWidth(), dc.getHeight(), safe, grid, k, n, showLabels, effW, titleH);
+            _printDebugInfo(dc.getWidth(), dc.getHeight(), safe, ftp, row2.size(), row3.size(), titleH, showLabels);
         }
     }
 
-    private function _collectMetrics(model as EbikeData) as Array<Dictionary> {
-        var metrics = new [0];
-        if (EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_POWER)) {
-            metrics.add({:label => WatchUi.loadResource(Rez.Strings.Power), :value => _fmt0(model.powerW), :unit => "W"});
-        }
+    //! Fixed companion band under the gauge: motor power / cadence / assist.
+    private function _collectRow2(model as EbikeData) as Array<Dictionary> {
+        var cells = new [0];
         if (EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_MOTOR_POWER)) {
-            metrics.add({:label => WatchUi.loadResource(Rez.Strings.Motor), :value => _fmt0(model.motorPowerW), :unit => "W"});
+            cells.add({:label => WatchUi.loadResource(Rez.Strings.Motor), :value => _fmt0(model.motorPowerW), :unit => WatchUi.loadResource(Rez.Strings.W)});
         }
         if (EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_CADENCE)) {
-            metrics.add({:label => WatchUi.loadResource(Rez.Strings.Cadence), :value => _fmt0(model.cadenceRpm), :unit => "rpm"});
+            cells.add({:label => WatchUi.loadResource(Rez.Strings.Cadence), :value => _fmt0(model.cadenceRpm), :unit => "rpm"});
         }
         if (EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_ASSIST)) {
-            metrics.add({:label => WatchUi.loadResource(Rez.Strings.Assist), :value => _fmt0(model.assistMode), :unit => ""});
+            cells.add({:label => WatchUi.loadResource(Rez.Strings.Assist), :value => _fmt0(model.assistMode), :unit => ""});
         }
+        return cells;
+    }
+
+    //! Fixed bottom band: battery / range.
+    private function _collectRow3(model as EbikeData) as Array<Dictionary> {
+        var cells = new [0];
         if (EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_BATTERY)) {
-            metrics.add({:label => WatchUi.loadResource(Rez.Strings.Battery), :value => _fmt0(model.batterySoc), :unit => "%"});
+            cells.add({:label => WatchUi.loadResource(Rez.Strings.Battery), :value => _fmt0(model.batterySoc), :unit => "%"});
         }
         if (EbikeConfig.isMetricEnabled($.CFG_KEY_METRIC_RANGE)) {
-            metrics.add({:label => WatchUi.loadResource(Rez.Strings.Range), :value => _fmt0(model.rangeKm), :unit => "km"});
+            cells.add({:label => WatchUi.loadResource(Rez.Strings.Range), :value => _fmt0(model.rangeKm), :unit => "km"});
         }
-        return metrics;
+        return cells;
     }
 
-    private function _minCellHeight(showLabels as Boolean) as Number {
-        var x = Graphics.getFontHeight(Graphics.FONT_XTINY);
-        return showLabels ? 2 * x + 2 : x;
+    //! Height one companion row needs, driven by the largest fitted value font
+    //! across its cells at their final cell width.
+    private function _rowBandH(dc as Dc, cells as Array<Dictionary>, w as Number, showLabels as Boolean) as Number {
+        var n = cells.size();
+        if (n == 0) {
+            return 0;
+        }
+        var cellW = w / n;
+        var maxH = 0;
+        for (var i = 0; i < n; i++) {
+            var c = cells[i] as Dictionary;
+            var fit = _fitValueFont(dc, c[:value] as String, c[:unit] as String, cellW, 90, showLabels);
+            var fh = Graphics.getFontHeight(fit[:valueFont] as FontType);
+            if (fh > maxH) {
+                maxH = fh;
+            }
+        }
+        var labelH = showLabels ? Graphics.getFontHeight(Graphics.FONT_XTINY) + 2 : 0;
+        // +8, not +2: _drawCell re-fits with availH = h - 6, so the band must
+        // carry maxH + labelH + 6 or the tallest fitted font is rejected at
+        // draw time and every companion cell drops one size.
+        return maxH + labelH + 8;
     }
 
-    //! True if a grid of k cells (labels + units at minimum size) fits the
-    //! given box. w is the effective (circle-limited) grid width.
-    private function _gridFits(dc as Dc, metrics as Array<Dictionary>, k as Number, w as Number, h as Number, showLabels as Boolean, titleH as Number, minCellH as Number) as Boolean {
-        for (var c = 1; c <= 3; c++) {
-            if (c > k) {
-                break;
-            }
-            var r = (k + c - 1) / c;
-            var cellW = w / c;
-            var cellH = (h - titleH) / r;
-            if (_cellsFit(dc, metrics, k, cellW, cellH, minCellH)) {
-                return true;
-            }
+    //! Draws a companion row as n equal cells centered in [x, x+w].
+    private function _drawValueRow(dc as Dc, cells as Array<Dictionary>, x as Number, y as Number, w as Number, h as Number, showLabels as Boolean) as Void {
+        var n = cells.size();
+        if (n == 0) {
+            return;
         }
-        return false;
+        var cellW = w / n;
+        for (var i = 0; i < n; i++) {
+            var c = cells[i] as Dictionary;
+            _drawCell(dc, x + i * cellW, y, cellW, h, c[:label] as String, c[:value] as String, c[:unit] as String, showLabels);
+        }
     }
 
-    private function _cellsFit(dc as Dc, metrics as Array<Dictionary>, k as Number, cellW as Number, cellH as Number, minCellH as Number) as Boolean {
-        if (cellH < minCellH + 6) {
-            return false;
-        }
-        var availW = cellW - 6;
-        for (var i = 0; i < k; i++) {
-            var metric = metrics[i] as Dictionary;
-            var needW = dc.getTextWidthInPixels(metric[:value] as String, Graphics.FONT_XTINY) + 1
-                + dc.getTextWidthInPixels(metric[:unit] as String, Graphics.FONT_XTINY);
-            if (needW > availW) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    //! Pick columns/rows so cells are as square as possible (1..3 columns).
-    private function _pickGrid(w as Number, h as Number, titleH as Number, k as Number) as Dictionary {
-        var best = null;
-        var bestScore = 1000000;
-        for (var c = 1; c <= 3; c++) {
-            if (c > k) {
-                break;
-            }
-            var r = (k + c - 1) / c;
-            var cellW = w / c;
-            var cellH = (h - titleH) / r;
-            if (cellH < 26) {
-                continue;
-            }
-            var diff = cellW - cellH;
-            if (diff < 0) {
-                diff = -diff;
-            }
-            if (diff > bestScore) {
-                continue;
-            }
-            var better = best == null || diff < bestScore;
-            if (diff == bestScore && best != null) {
-                // Tie-break: more columns when wide, more rows when tall.
-                var wide = cellW > cellH;
-                var bestCols = (best as Dictionary)[:cols] as Number;
-                better = (wide && c > bestCols) || (!wide && c < bestCols);
-            }
-            if (better) {
-                best = {:cols => c, :rows => r, :cellW => cellW, :cellH => cellH};
-                bestScore = diff;
-            }
-        }
-        if (best == null) {
-            var r = k;
-            best = {:cols => 1, :rows => r, :cellW => w, :cellH => (h - titleH) / r};
-        }
-        return best;
-    }
-
-    //! When the field spans the full width of a round screen and touches its
-    //! top or bottom edge, infer the screen circle in field coordinates so the
-    //! grid can be clipped to the actually visible area. Returns null when the
-    //! position cannot be determined (middle bands, side cells, rectangular
-    //! screens), in which case the uniform insets are used alone.
-    private function _inferCircle(dc as Dc, flags as Number) as Dictionary? {
-        if ((flags & (OBSCURE_LEFT | OBSCURE_RIGHT)) != (OBSCURE_LEFT | OBSCURE_RIGHT)) {
-            return null;
-        }
+    //! Radial power gauge riding the very top of the screen: a partial cap arc
+    //! concentric with the display circle whose outer stroke edge is flush with
+    //! the top of the screen (the crown IS the top of the visible circle, so
+    //! there is no safe.top clamp). The cap spans 10h..14h (theta 60): f = 0
+    //! (0 W) at a1 = 150 deg on the LEFT, f = 1 (2*FTP) at a0 = 30 deg on the
+    //! RIGHT, FTP at the zenith (SDK convention: 0 deg = east, 90 = top).
+    //! Seven EQUAL segments (each 2/7 FTP) read grey, light blue, light green,
+    //! yellow (FTP centered), orange, red, purple; the needle is a short radial
+    //! stub just inside the arc; the value (plus an optional label) sits
+    //! centered under the cap's chord.
+    private function _drawPowerGauge(dc as Dc, model as EbikeData, safe as Dictionary, gaugeY as Number, gaugeH as Number, ftp as Number, fg as ColorType, showLabels as Boolean, fit as Dictionary) as Void {
         var fw = dc.getWidth();
         var fh = dc.getHeight();
-        var r = fw / 2;
-        var cx = fw / 2;
-        var cy = 0;
-        if ((flags & OBSCURE_TOP) != 0) {
-            cy = r;
-        } else if ((flags & OBSCURE_BOTTOM) != 0) {
-            cy = fh - r;
+        var x = safe[:x] as Number;
+        var w = safe[:w] as Number;
+
+        var value = _fmt0(model.powerW);
+        var wid = WatchUi.loadResource(Rez.Strings.W);
+        var vf = fit[:valueFont] as FontType;
+        var showUnit = fit[:showUnit] as Boolean;
+        var vh = Graphics.getFontHeight(vf);
+        var labelH = showLabels ? Graphics.getFontHeight(Graphics.FONT_XTINY) + 2 : 0;
+        var blockH = vh + labelH + 2;
+
+        // Arc circle = display circle. The arc is concentric with the screen,
+        // so its zenith IS the top of the visible circle: ride the very top
+        // edge, no inset. (Clamping the crown under safe.top pulled it down by
+        // the whole top inset and left exactly the dead space above the arc
+        // that was reported.)
+        var screenR = (fw < fh ? fw : fh) / 2;
+        var cx = (fw / 2).toNumber();
+        var scy = (fh / 2).toNumber();
+        var bw = 21;
+        var r = (screenR - bw / 2).toNumber();
+        if (r < 30) {
+            r = 30;
+        }
+
+        // Cap half-angle: 60 deg, i.e. the arc spans 10h..14h (a1 = 150 deg on
+        // the left down to a0 = 30 deg on the right). 60 is the default and the
+        // floor is 55, so a full 10h-14h cap is what actually renders; the
+        // shrink above is only a last-resort guard for a very short field.
+        var theta = 60.0;
+        var maxCos = 1.0 - (gaugeH - blockH).toFloat() / r.toFloat();
+        if (maxCos > -1.0 && maxCos < 1.0) {
+            var thetaLim = Math.acos(maxCos) * 180.0 / Math.PI;
+            if (theta > thetaLim) {
+                theta = thetaLim;
+            }
+        }
+        if (theta > 64.0) {
+            theta = 64.0;
+        }
+        if (theta < 55.0) {
+            theta = 55.0;
+        }
+
+        // a1 = 90+theta (10h, low power, LEFT); the arc is drawn from a1 down
+        // to a0 = 90-theta (14h, high power, RIGHT) as f goes 0..1.
+        var a1 = 90.0 + theta;
+        var tRad = theta * Math.PI / 180.0;
+
+        // Equal-width ramp (each 2/7 FTP) so every segment is the same size:
+        // grey, light blue, light green, yellow (FTP centered), orange, red,
+        // purple. f runs 0..1 left->right, so LOW power is on the LEFT.
+        var zoneColors = [
+            Graphics.COLOR_LT_GRAY,  // 0.00 .. 0.29
+            Graphics.COLOR_BLUE,     // 0.29 .. 0.57
+            Graphics.COLOR_GREEN,    // 0.57 .. 0.86
+            Graphics.COLOR_YELLOW,   // 0.86 .. 1.14  (FTP centered)
+            Graphics.COLOR_ORANGE,   // 1.14 .. 1.43
+            Graphics.COLOR_RED,      // 1.43 .. 1.71
+            Graphics.COLOR_PURPLE    // 1.71 .. 2.00
+        ];
+        var seg = 2.0 / 7.0;
+        for (var i = 0; i < zoneColors.size(); i++) {
+            var fLo = (i * seg) / 2.0;
+            var fHi = ((i + 1) * seg) / 2.0;
+            dc.setColor(zoneColors[i] as ColorType, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(bw);
+            dc.drawArc(cx, scy, r, Graphics.ARC_CLOCKWISE, (a1 - 2.0 * theta * fLo).toNumber(), (a1 - 2.0 * theta * fHi).toNumber());
+        }
+
+        // FTP tick removed on purpose: the green apex marks FTP±15 % and its
+        // center line is exactly FTP, so an extra tick just looks like a glitch.
+
+        // Partial needle: a short radial stub just inside the arc, at the
+        // current power, clamped at the gauge ends (0 and 2*FTP).
+        var power = model.powerW;
+        if (power != null) {
+            var f = power.toFloat() / (2.0 * ftp);
+            if (f < 0.0) {
+                f = 0.0;
+            }
+            if (f > 1.0) {
+                f = 1.0;
+            }
+            var alpha = (a1 - 2.0 * theta * f) * Math.PI / 180.0;
+            var ri = (r - 29).toNumber();
+            var ro = (r - 8).toNumber();
+            var xi = (cx + (ri * Math.cos(alpha)).toNumber()).toNumber();
+            var yi = (scy - (ri * Math.sin(alpha)).toNumber()).toNumber();
+            var xo = (cx + (ro * Math.cos(alpha)).toNumber()).toNumber();
+            var yo = (scy - (ro * Math.sin(alpha)).toNumber()).toNumber();
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(6);
+            dc.drawLine(xi, yi, xo, yo);
+        }
+        dc.setPenWidth(1);
+
+        // Value (+ optional label) centered under the cap's chord.
+        var chordY = (scy - (r * Math.cos(tRad)).toNumber()).toNumber();
+        var valCx = (x + w / 2).toNumber();
+        dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+        var topY = chordY + 1;
+        if (showLabels) {
+            dc.drawText(valCx, topY, Graphics.FONT_XTINY, WatchUi.loadResource(Rez.Strings.Power), Graphics.TEXT_JUSTIFY_CENTER);
+            topY += labelH;
+        }
+        if (topY + vh > gaugeY + gaugeH) {
+            topY = gaugeY + gaugeH - vh;
+        }
+        var uf = Graphics.FONT_XTINY;
+        var uw = dc.getTextWidthInPixels(wid, uf);
+        var vw = dc.getTextWidthInPixels(value, vf);
+        if (showUnit) {
+            var total = vw + 1 + uw;
+            var vx = valCx - total / 2;
+            var ux = vx + vw + 1;
+            var uy = topY + vh - Graphics.getFontHeight(uf);
+            dc.drawText(vx + vw / 2, topY, vf, value, Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawText(ux, uy, uf, wid, Graphics.TEXT_JUSTIFY_LEFT);
         } else {
-            return null;
+            dc.drawText(valCx, topY, vf, value, Graphics.TEXT_JUSTIFY_CENTER);
         }
-        return {:cx => cx, :cy => cy, :r => r};
-    }
-
-    //! Largest width the grid may use so that its corners stay inside the round
-    //! screen: limited by the narrowest horizontal chord across the rows and by
-    //! the vertical chord available at the outer columns.
-    private function _effectiveWidth(w as Number, h as Number, titleH as Number, y as Number, circle as Dictionary?) as Number {
-        if (circle == null) {
-            return w;
-        }
-        var cy = circle[:cy] as Number;
-        var r = circle[:r] as Number;
-        var gTop = y + titleH;
-        var gBottom = y + h;
-        var hw = _halfChord(r, gTop, cy);
-        var hc = _halfChord(r, gBottom, cy);
-        if (hc < hw) {
-            hw = hc;
-        }
-        var m = cy - gTop;
-        var m2 = gBottom - cy;
-        if (m2 > m) {
-            m = m2;
-        }
-        if (m < 0) {
-            m = 0;
-        }
-        if (m < r) {
-            hc = _halfChord(r, cy + m, cy);
-            if (hc < hw) {
-                hw = hc;
-            }
-        }
-        var maxHalf = w / 2;
-        if (hw > maxHalf) {
-            hw = maxHalf;
-        }
-        return (hw * 2).toNumber();
-    }
-
-    private function _halfChord(r as Number, yLine as Number, cy as Number) as Float {
-        var d = yLine - cy;
-        var r2 = r * r;
-        var d2 = d * d;
-        if (d2 >= r2) {
-            return 0.0;
-        }
-        return Math.sqrt(r2 - d2);
-    }
-
-    //! Pick the title option (keep or drop) that shows the most metrics, and
-    //! return the chosen title height, grid and effective width. The title is
-    //! sacrificed before the number of metrics; on equal counts the roomier
-    //! cells (bigger minimum dimension) win.
-    private function _bestLayout(dc as Dc, metrics as Array<Dictionary>, x as Number, y as Number, w as Number, h as Number, showLabels as Boolean, minCellH as Number, circle as Dictionary?) as Dictionary {
-        var n = metrics.size();
-        var bestK = 0;
-        var bestTitleH = 0;
-        var bestEffW = w;
-        var bestGrid = null;
-        var bestMinDim = -1;
-        var titleOpts = [_titleHeight(w, h), 0];
-        for (var i = 0; i < titleOpts.size(); i++) {
-            var titleH = titleOpts[i] as Number;
-            var effW = _effectiveWidth(w, h, titleH, y, circle);
-            var k = n;
-            while (k > 1 && !_gridFits(dc, metrics, k, effW, h, showLabels, titleH, minCellH)) {
-                k--;
-            }
-            var grid = _pickGrid(effW, h, titleH, k);
-            var cellW = grid[:cellW] as Number;
-            var cellH = grid[:cellH] as Number;
-            var minDim = cellW < cellH ? cellW : cellH;
-            if (k > bestK || (k == bestK && minDim > bestMinDim)) {
-                bestK = k;
-                bestTitleH = titleH;
-                bestEffW = effW;
-                bestGrid = grid;
-                bestMinDim = minDim;
-            }
-            if (k >= n) {
-                break;
-            }
-        }
-        return {:titleH => bestTitleH, :effW => bestEffW, :grid => bestGrid, :k => bestK};
+        _lastValueFont = vf;
     }
 
     //! Largest value font whose value+unit fit horizontally and vertically.
@@ -658,7 +716,7 @@ class EbikeDataField extends WatchUi.DataField {
     //! Prints the one-line layout/debug summary to the console instead of
     //! drawing it on screen, so the watch face stays clean. Only prints when
     //! the line changed, to avoid spamming the console every second.
-    private function _printDebugInfo(fw as Number, fh as Number, safe as Dictionary, grid as Dictionary, shown as Number, selected as Number, showLabels as Boolean, effW as Number, titleH as Number) as Void {
+    private function _printDebugInfo(fw as Number, fh as Number, safe as Dictionary, ftp as Number, row2n as Number, row3n as Number, titleH as Number, showLabels as Boolean) as Void {
         var w = safe[:w] as Number;
         var h = safe[:h] as Number;
         var flags = safe[:flags] as Number;
@@ -666,13 +724,11 @@ class EbikeDataField extends WatchUi.DataField {
         var bottom = safe[:bottom] as Number;
         var left = safe[:left] as Number;
         var right = safe[:right] as Number;
-        var cols = grid[:cols] as Number;
-        var rows = grid[:rows] as Number;
         var line = "F" + fw.toString() + "x" + fh.toString()
             + " S" + w.toString() + "x" + h.toString()
-            + " gw" + effW.toString() + " t" + titleH.toString()
-            + " n=" + shown.toString() + "/" + selected.toString()
-            + " " + cols.toString() + "x" + rows.toString()
+            + " ftp" + ftp.toString()
+            + " r2=" + row2n.toString() + " r3=" + row3n.toString()
+            + " t" + titleH.toString()
             + " f" + _fontLetter(_lastValueFont)
             + " lbl" + (showLabels ? "1" : "0")
             + " O:" + _obscureString(flags)
