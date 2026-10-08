@@ -48,9 +48,6 @@ class Pdo {
             case 0x261:
             case 0x3A1:
             default:
-                if (EbikeConfig.isDebug()) {
-                    System.println("CAN 0x" + _hex2(canId) + " " + _hex(d));
-                }
                 break;
         }
     }

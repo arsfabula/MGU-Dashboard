@@ -85,7 +85,7 @@ class DemoManager {
         var model = _model;
         model.connected = true;
         model.speedKmh = _speed;
-        model.powerW = power;
+        model.setPower(power);
         model.motorPowerW = motorPower;
         model.cadenceRpm = cadence;
         model.assistPercent = assist;

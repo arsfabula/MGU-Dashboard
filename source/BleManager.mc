@@ -83,10 +83,9 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
 
     //! Serialized write queue: CIQ only allows one BLE request in flight at a
     //! time ("Operation already in Progress" otherwise). Entries are
-    //! dictionaries { :kind => :char | :desc, :target, :data, :log }.
+    //! dictionaries { :kind => :char | :desc, :target, :data }.
     private var _writeQueue as Array<Dictionary> = [];
     private var _writeBusy as Boolean = false;
-    private var _pendingLog as String = "";
 
     //! NOTE: this may throw (registerProfile fails when the device's GATT
     //! profile table cannot take the definition) — hence the two-tier handling
@@ -116,8 +115,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                     BluetoothLowEnergy.registerProfile(profiles[i]);
                 } catch (ex) {
                     _legacyProfileOk = false;
-                    _model.lastError = ex.getErrorMessage();
-                    System.println("BleManager: legacy profile exc " + ex.getErrorMessage());
                 }
             }
         }
@@ -155,10 +152,8 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         } catch (ex) {
             _initFailures += 1;
             _nextRetryAt = now + _initRetryMs;
-            model.lastError = ex.getErrorMessage();
             //! ERA reports the backtrace but never the message, so this line
             //! is the only place the reason is ever written down.
-            System.println("BleManager: init exc " + ex.getErrorMessage());
             return null;
         }
     }
@@ -178,8 +173,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
             BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
         } catch (ex) {
             _active = false;
-            _model.lastError = ex.getErrorMessage();
-            System.println("BleManager: scan exc " + ex.getErrorMessage());
         }
     }
 
@@ -204,8 +197,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         try {
             BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
         } catch (ex) {
-            _model.lastError = ex.getErrorMessage();
-            System.println("BleManager: stop exc " + ex.getErrorMessage());
         }
     }
 
@@ -252,15 +243,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
     }
 
     public function onProfileRegister(uuid as Uuid, status as BluetoothLowEnergy.Status) as Void {
-        if (status == BluetoothLowEnergy.STATUS_SUCCESS) {
-            System.println("BleManager: prof OK");
-            if (uuid.equals(SERVICE_UUID)) {
-                _model.profileStatus = 0;
-            }
-        } else {
-            _model.profileStatus = status;
-            System.println("BleManager: prof FAIL st=" + status);
-        }
         WatchUi.requestUpdate();
     }
 
@@ -268,7 +250,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         if (!_active) {
             return;
         }
-        System.println("BleManager: scan");
         while (true) {
             try {
                 if (!_active) {
@@ -280,7 +261,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                 }
                 if (result instanceof BluetoothLowEnergy.ScanResult) {
                     var scanResult = result as BluetoothLowEnergy.ScanResult;
-                    System.println("BleManager:   rssi=" + scanResult.getRssi() + " name=" + scanResult.getDeviceName());
                     var uuids = scanResult.getServiceUuids();
                     while (true) {
                         var uuid = uuids.next();
@@ -293,15 +273,12 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                                 _model.bikeName = name;
                             }
                             BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
-                            System.println("BleManager: pairing");
                             BluetoothLowEnergy.pairDevice(scanResult);
                             return;
                         }
                     }
                 }
             } catch (ex) {
-                _model.lastError = ex.getErrorMessage();
-                System.println("BleManager: scan exc " + ex.getErrorMessage());
             }
         }
     }
@@ -312,7 +289,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         }
         try {
             if (state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
-                System.println("BleManager: CONNECTED");
                 if (_model.bikeName == null || _model.bikeName.length() == 0) {
                     var name = device.getName();
                     if (name != null && name.length() > 0) {
@@ -320,34 +296,24 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                     }
                 }
                 _queueReset();
-                if (!_legacyProfileOk) {
-                    //! Already known to be impossible, no point asking the
-                    //! device for a service whose profile was never registered.
-                    System.println("BleManager: legacy profile refused, no heartbeat");
-                    _model.serviceFound = false;
-                } else {
+                if (_legacyProfileOk) {
                     var service = device.getService(SERVICE_UUID);
-                    _model.serviceFound = (service != null);
                     if (service != null) {
                         var tx = service.getCharacteristic(TX_UUID);
                         var rx = service.getCharacteristic(RX_UUID);
                         _txChar = tx;
-                        _model.rxCharFound = (rx != null);
                         if (rx != null) {
                             var cccd = rx.getDescriptor(BluetoothLowEnergy.cccdUuid());
                             if (cccd != null) {
-                                _queueDescriptorWrite(cccd, [0x01, 0x00]b, "rxC");
+                                _queueDescriptorWrite(cccd, [0x01, 0x00]b);
                             }
                         }
-                    } else {
-                        System.println("BleManager: no 5e8597aa");
                     }
                 }
                 // The stream actually arrives on the Sigma/FD6D service.
                 // Enable notifications on every 00000001..08 so we see vehicle
                 // traffic on all of them (RIDE on 01, BATTERY on 03, ...).
                 var fd6d = device.getService(ADV_SERVICE_UUID);
-                _model.fd6dServiceFound = (fd6d != null);
                 if (fd6d != null) {
                     _enableFd6dNotifications(fd6d);
                 }
@@ -355,13 +321,10 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                 _lastHeartbeat = 0;
                 _bootPending = true;
             } else {
-                System.println("BleManager: DISCONNECTED");
                 _model.connected = false;
             }
             WatchUi.requestUpdate();
         } catch (ex) {
-            _model.lastError = ex.getErrorMessage();
-            System.println("BleManager: connect exception " + ex.getErrorMessage());
             WatchUi.requestUpdate();
         }
     }
@@ -375,29 +338,19 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
             // Real stream: Sigma/FD6D service. Tag the characteristic so
             // probing 00000001..08 is readable (RX1..RX8).
             var uuid = characteristic.getUuid();
-            var tag = _charTag(characteristic);
-            _model.rxOtherCount += 1;
-            var hexOther = _model.lastRxOtherHex;
-            _model.lastRxOtherHex = _appendHex(hexOther, _hexC(value));
-            var line = "BleManager: t=" + t + " " + tag + " " + value.size() + "B " + _hexC(value);
             if (uuid.equals(FD6D_NOTIFY_UUID) && value.size() == 10) {
                 _sigma.parseRide(value, _model);
                 _model.lastUpdate = t;
-                line += _decoded(_model);
             } else if (uuid.equals(FD6D_MOTOR_UUID) && value.size() == 10) {
                 _sigma.parseMotor(value, _model);
                 _model.lastUpdate = t;
-                line += _decodedMotor(value);
             } else if (uuid.equals(FD6D_BATTERY_UUID) && value.size() == 12) {
                 _sigma.parseBattery(value, _model);
                 _model.lastUpdate = t;
-                line += _decodedBattery(value);
             } else if (uuid.equals(FD6D_ASSISTANCE_UUID) && value.size() == 2) {
                 _sigma.parseAssist(value, _model);
                 _model.lastUpdate = t;
-                line += _decodedAssist(value);
             }
-            System.println(line);
             WatchUi.requestUpdate();
             //! Heartbeat and FIT recording ride along on incoming RX traffic:
             //! this is the only periodic event source that keeps firing while
@@ -411,95 +364,8 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                 fit.update(_model);
             }
         } catch (ex) {
-            _model.lastError = ex.getErrorMessage();
-            System.println("BleManager: char exc " + ex.getErrorMessage());
             WatchUi.requestUpdate();
         }
-    }
-
-    //! Compact decoded summary of the last SIGMA RIDE values for one log line.
-    private function _decoded(model as EbikeData) as String {
-        var s = " ";
-        var speed = model.speedKmh;
-        s += speed == null ? "--" : speed.format("%.1f");
-        s += "km/h ";
-        var dist = model.tripDistanceKm;
-        s += dist == null ? "--" : dist.format("%.1f");
-        s += "km ";
-        var power = model.powerW;
-        s += power == null ? "--" : power.toString();
-        s += "W ";
-        var torque = model.torqueNm;
-        s += torque == null ? "--" : torque.toString();
-        s += "Nm ";
-        var cad = model.cadenceRpm;
-        s += cad == null ? "--" : cad.toString();
-        s += "rpm";
-        return s;
-    }
-
-    //! Compact decoded summary of a SIGMA motor report (RX2, 10 bytes): motor
-    //! power W + raw torque/current/voltage/temperature + assistance % for
-    //! field validation (the trailing % is RX2 [9], not the RX7 mode).
-    private function _decodedMotor(value as ByteArray) as String {
-        var s = " ";
-        s += _sigma.u16(value, 0).toString();
-        s += "W ";
-        s += _sigma.u16(value, 2).toString();
-        s += "Nm ";
-        s += _sigma.u16(value, 4).toString();
-        s += "A ";
-        s += _sigma.u16(value, 6).toString();
-        s += "V ";
-        s += value[8].toString();
-        s += "C assist";
-        s += value[9].toString();
-        s += "%";
-        return s;
-    }
-
-    //! Compact decoded summary of a SIGMA assistance report (RX7, 2 bytes):
-    //! active assist mode + start-up assistance flag.
-    private function _decodedAssist(value as ByteArray) as String {
-        var s = " mode=";
-        s += value[0].toString();
-        s += " start=";
-        s += value[1].toString();
-        return s;
-    }
-
-    //! Log tag RX1..RX8 computed from the FD6D characteristic UUID, so probes
-    //! are readable regardless of which characteristic carries real data. BRX
-    //! tags the legacy BCP RX characteristic (ACK / CAP responses).
-    private function _charTag(characteristic as BluetoothLowEnergy.Characteristic) as String {
-        var uuid = characteristic.getUuid();
-        if (uuid.equals(RX_UUID)) {
-            return "BRX";
-        }
-        for (var i = FD6D_FIRST_CHAR; i <= FD6D_LAST_CHAR; i++) {
-            if (uuid.equals(_fd6dCharUuid(i))) {
-                return "RX" + i.toString();
-            }
-        }
-        return "RX?";
-    }
-
-    //! Compact decoded summary of a SIGMA battery report (12 bytes), for one
-    //! log line: SOC %, range km, temperature.
-    private function _decodedBattery(value as ByteArray) as String {
-        var s = " ";
-        s += value[0].toString();
-        s += "% ";
-        var range = _sigma.u16(value, 6);
-        if (range == 0xFFFF) {
-            s += "--";
-        } else {
-            s += range.toString();
-        }
-        s += "km ";
-        s += value[5].toFloat().format("%.0f");
-        s += "C";
-        return s;
     }
 
     public function onCharacteristicWrite(characteristic as BluetoothLowEnergy.Characteristic, status as BluetoothLowEnergy.Status) as Void {
@@ -509,12 +375,9 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         try {
             // Heartbeats fire constantly; only log failures to keep log size sane.
             if (status != BluetoothLowEnergy.STATUS_SUCCESS) {
-                System.println("BleManager: write " + _pendingLog + " st=" + status);
             }
             _queueDone();
         } catch (ex) {
-            _model.lastError = ex.getErrorMessage();
-            System.println("BleManager: write exc " + ex.getErrorMessage());
         }
     }
 
@@ -523,18 +386,14 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
             return;
         }
         try {
-            System.println("BleManager: desc " + _pendingLog + " st=" + status);
             _queueDone();
         } catch (ex) {
-            _model.lastError = ex.getErrorMessage();
-            System.println("BleManager: descwrite exc " + ex.getErrorMessage());
         }
     }
 
     private function _queueReset() as Void {
         _writeQueue = [];
         _writeBusy = false;
-        _pendingLog = "";
     }
 
     //! Enables notifications (CCCD = 0x0001) on every FD6D characteristic
@@ -546,19 +405,19 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
             if (char != null) {
                 var cccd = char.getDescriptor(BluetoothLowEnergy.cccdUuid());
                 if (cccd != null) {
-                    _queueDescriptorWrite(cccd, [0x01, 0x00]b, "fdC" + i.toString());
+                    _queueDescriptorWrite(cccd, [0x01, 0x00]b);
                 }
             }
         }
     }
 
-    private function _queueDescriptorWrite(descriptor as BluetoothLowEnergy.Descriptor, data as ByteArray, log as String) as Void {
-        _writeQueue = _writeQueue.add({:kind => :desc, :target => descriptor, :data => data, :log => log});
+    private function _queueDescriptorWrite(descriptor as BluetoothLowEnergy.Descriptor, data as ByteArray) as Void {
+        _writeQueue = _writeQueue.add({:kind => :desc, :target => descriptor, :data => data});
         _queueDrain();
     }
 
-    private function _queueCharacteristicWrite(characteristic as BluetoothLowEnergy.Characteristic, data as ByteArray, log as String) as Void {
-        _writeQueue = _writeQueue.add({:kind => :char, :target => characteristic, :data => data, :log => log});
+    private function _queueCharacteristicWrite(characteristic as BluetoothLowEnergy.Characteristic, data as ByteArray) as Void {
+        _writeQueue = _writeQueue.add({:kind => :char, :target => characteristic, :data => data});
         _queueDrain();
     }
 
@@ -574,7 +433,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         var entry = _writeQueue[0];
         _writeQueue = _writeQueue.slice(1, _writeQueue.size());
         _writeBusy = true;
-        _pendingLog = entry[:log] as String;
         try {
             if (entry[:kind] == :desc) {
                 var desc = entry[:target] as BluetoothLowEnergy.Descriptor;
@@ -584,8 +442,6 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
                 char.requestWrite(entry[:data] as ByteArray, {:writeType => BluetoothLowEnergy.WRITE_TYPE_DEFAULT});
             }
         } catch (ex) {
-            _model.lastError = ex.getErrorMessage();
-            System.println("BleManager: queued write exc " + ex.getErrorMessage());
             _writeBusy = false;
             _queueDrain();
         }
@@ -618,7 +474,7 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
         frame[4] = 0x08;
         frame[5] = status;
         frame[6] = 0x00;
-        _queueCharacteristicWrite(tx, frame, "hb" + status);
+        _queueCharacteristicWrite(tx, frame);
     }
 
     private function _sendHeartbeat(status as Number) as Void {
@@ -641,11 +497,9 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
             return;
         }
         var frame = _buildAssistFrame(level);
-        var log = "assist" + level.toString();
-        System.println("BleManager: " + log + " tx=" + _hex(frame));
-        _queueCharacteristicWrite(tx, frame, log);
-        _queueCharacteristicWrite(tx, frame, log);
-        _queueCharacteristicWrite(tx, frame, log);
+        _queueCharacteristicWrite(tx, frame);
+        _queueCharacteristicWrite(tx, frame);
+        _queueCharacteristicWrite(tx, frame);
         _sendPersist(1);
         _sendPersist(2);
     }
@@ -660,9 +514,8 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
             return;
         }
         var frame = _buildSdoWriteFrame(node, 4112, 1, [0x73, 0x61, 0x76, 0x65]b);
-        System.println("BleManager: save" + node.toString() + " tx=" + _hex(frame));
-        _queueCharacteristicWrite(tx, frame, "save" + node.toString());
-        _queueCharacteristicWrite(tx, frame, "save" + node.toString());
+        _queueCharacteristicWrite(tx, frame);
+        _queueCharacteristicWrite(tx, frame);
     }
 
     //! Builds the 20-byte BCP single frame carrying a CAP SDO_WRITE for
@@ -720,43 +573,5 @@ class BleManager extends BluetoothLowEnergy.BleDelegate {
             frame[13 + i] = data[i];
         }
         return frame;
-    }
-
-    private function _hex(data as ByteArray) as String {
-        var s = "";
-        for (var i = 0; i < data.size(); i++) {
-            var b = data[i] & 0xFF;
-            s += b.format("%02x");
-            if (i < data.size() - 1) {
-                s += " ";
-            }
-        }
-        return s;
-    }
-
-    //! Space-free hex used in the compact per-frame log lines.
-    private function _hexC(data as ByteArray) as String {
-        var s = "";
-        for (var i = 0; i < data.size(); i++) {
-            s += (data[i] & 0xFF).format("%02x");
-        }
-        return s;
-    }
-
-    //! Keep a small sliding window of the most recent frames (hex), newest last.
-    private function _appendHex(old as String?, newHex as String) as String {
-        var s = old == null ? "" : old;
-        s += "|" + newHex;
-        // Trim from the front to keep roughly the last 5 frames.
-        while (s.length() > 260) {
-            var cut = s.substring(1, s.length());
-            var nxt = cut.find("|");
-            if (nxt != null && nxt > 0) {
-                s = cut.substring(nxt, cut.length());
-            } else {
-                s = cut;
-            }
-        }
-        return s;
     }
 }

@@ -1,10 +1,8 @@
-import Toybox.Activity;
 import Toybox.Application;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.Math;
 import Toybox.System;
-import Toybox.UserProfile;
 import Toybox.WatchUi;
 
 class EbikeDataField extends WatchUi.DataField {
@@ -12,13 +10,6 @@ class EbikeDataField extends WatchUi.DataField {
     private var _ble as BleManager?;
     private var _demo as DemoManager?;
     private var _fit as EbikeFitContributor?;
-    private var _lastValueFont as FontType;
-    //! Absolute minimum arc+value band height in px, below which the gauge
-    //! would be too cramped to read. Rows are sacrificed before it.
-    private const MIN_GAUGE_H = 72;
-    //! User profile FTP read once per session (null until attempted / when the
-    //! API is not exposed on this device).
-    private var _profileFtp as Number? = null;
     //! Last assist level sent to the bike, and whether we were connected, so a
     //! change in the setting (or a new connection) triggers a write.
     private var _lastAssistSent as Number? = null;
@@ -36,47 +27,19 @@ class EbikeDataField extends WatchUi.DataField {
         if (ble != null) {
             ble.setFitContributor(fit);
         }
-        _lastValueFont = Graphics.FONT_XTINY;
     }
 
     //! Best available rider FTP in watts for the gauge scale: the explicit
-    //! on-device setting if set (> 0), otherwise the user profile's cycling
-    //! FTP when the API is exposed, otherwise 200 W. The profile read is
-    //! cached per session; the setting is re-read every draw (it changes only
-    //! through the settings menu, but the field may stay alive across pages).
+    //! on-device setting if set (> 0), otherwise the "auto" resolution shared
+    //! with the settings menu (profile FTP, else 200 W). The setting is
+    //! re-read every draw (it changes only through the settings menu, but the
+    //! field may stay alive across pages).
     private function _resolveFtp() as Number {
         var override = EbikeConfig.ftpOverride();
         if (override > 0) {
             return override;
         }
-        var profile = _profileFtp;
-        if (profile == null) {
-            profile = _readProfileFtp();
-            _profileFtp = profile;
-        }
-        if (profile != null && profile > 0) {
-            return profile;
-        }
-        return 200;
-    }
-
-    //! Reads the cyclist FTP from the connected user profile. Feature-gated:
-    //! getFunctionalThresholdPower is only exposed from API level 5.2.2 on a
-    //! subset of devices (fenix 8, Venu 4/X1, FR 970/570, Edge 8xx...), so on
-    //! older bodies this stays null and the caller falls back to 200 W.
-    private function _readProfileFtp() as Number? {
-        if (!(UserProfile has :getFunctionalThresholdPower)) {
-            return null;
-        }
-        try {
-            var ftp = UserProfile.getFunctionalThresholdPower(Activity.SPORT_CYCLING);
-            if (ftp instanceof Number) {
-                return ftp as Number;
-            }
-        } catch (ex) {
-            System.println("EbikeField: FTP profile read failed");
-        }
-        return null;
+        return EbikeConfig.autoFtp();
     }
 
     //! Make sure the correct data source (demo vs BLE) matches the current
@@ -327,17 +290,33 @@ class EbikeDataField extends WatchUi.DataField {
         var row3 = _collectRow3(model);
 
         var titleH = _titleHeight(w, h);
-        var row2H = _rowBandH(dc, row2, w, showLabels);
-        var row3H = _rowBandH(dc, row3, w, showLabels);
+        var minG = _minGaugeH(w, h, showLabels);
+        // The rows claim their natural height first: each cell fits the
+        // tallest font that fits ITS OWN width (w / n), so the size already
+        // adapts to how many metrics are enabled, and the fit is no longer
+        // capped by a fixed band budget. Only a gauge squeezed under minG
+        // pushes the rows down, and then each one is re-fitted at the height
+        // it actually gets so the drawn font is always the one reserved.
+        var row2H = _rowBandH(dc, row2, w, showLabels, h);
+        var row3H = _rowBandH(dc, row3, w, showLabels, h);
+        var avail = h - titleH - minG;
+        if (avail < 0) {
+            avail = 0;
+        }
+        if (row2H + row3H > avail) {
+            var share2 = (avail * row2H) / (row2H + row3H);
+            row2H = _rowBandH(dc, row2, w, showLabels, share2);
+            row3H = _rowBandH(dc, row3, w, showLabels, avail - share2);
+        }
 
         // The gauge always keeps its spot; sacrifice the title first, then the
         // last row, so the power arc never has to shrink below legibility.
         var gaugeH = h - titleH - row2H - row3H;
-        if (gaugeH < MIN_GAUGE_H) {
+        if (gaugeH < minG) {
             titleH = 0;
             gaugeH = h - row2H - row3H;
         }
-        if (gaugeH < MIN_GAUGE_H) {
+        if (gaugeH < minG) {
             row3H = 0;
             gaugeH = h - row2H;
         }
@@ -350,7 +329,8 @@ class EbikeDataField extends WatchUi.DataField {
         // contour), so it gets the absolute band from the field top to row 2.
         // NB: the value fit is computed here, not inside the gauge: invoking a
         // class method from that 8-arg drawing frame crashes the simulator VM.
-        var gfit = _fitValueFont(dc, _fmt0(model.powerW), WatchUi.loadResource(Rez.Strings.W), w, yRow2 - y, showLabels);
+        var gfit = _fitValueFont(dc, _fmt0(model.powerW3s), WatchUi.loadResource(Rez.Strings.W) + " 3s", w, yRow2 - y, showLabels);
+        gfit[:value] = _fmt0(model.powerW3s);
         _drawPowerGauge(dc, model, safe, y, yRow2 - y, ftp, fg, showLabels, gfit);
         _drawValueRow(dc, row2, x, yRow2, w, row2H, showLabels);
         _drawValueRow(dc, row3, x, yRow3, w, row3H, showLabels);
@@ -390,12 +370,6 @@ class EbikeDataField extends WatchUi.DataField {
             }
             dc.drawText(x + w / 2, titleY + 1, Graphics.FONT_XTINY, title, Graphics.TEXT_JUSTIFY_CENTER);
         }
-
-        if (EbikeConfig.isDebug()) {
-            dc.setColor(Graphics.COLOR_BLUE, Graphics.COLOR_TRANSPARENT);
-            dc.drawRectangle(x, y, w, h);
-            _printDebugInfo(dc.getWidth(), dc.getHeight(), safe, ftp, row2.size(), row3.size(), titleH, showLabels);
-        }
     }
 
     //! Fixed companion band under the gauge: motor power / cadence / assist.
@@ -426,17 +400,20 @@ class EbikeDataField extends WatchUi.DataField {
     }
 
     //! Height one companion row needs, driven by the largest fitted value font
-    //! across its cells at their final cell width.
-    private function _rowBandH(dc as Dc, cells as Array<Dictionary>, w as Number, showLabels as Boolean) as Number {
+    //! across its cells at their final cell width. `budget` is the height the
+    //! row may claim: the fit is capped by it, and the returned band never
+    //! exceeds it, so what the layout reserves and what the draw re-fits can
+    //! never disagree.
+    private function _rowBandH(dc as Dc, cells as Array<Dictionary>, w as Number, showLabels as Boolean, budget as Number) as Number {
         var n = cells.size();
-        if (n == 0) {
+        if (n == 0 || budget <= 0) {
             return 0;
         }
         var cellW = w / n;
         var maxH = 0;
         for (var i = 0; i < n; i++) {
             var c = cells[i] as Dictionary;
-            var fit = _fitValueFont(dc, c[:value] as String, c[:unit] as String, cellW, 90, showLabels);
+            var fit = _fitValueFont(dc, c[:value] as String, c[:unit] as String, cellW, budget, showLabels);
             var fh = Graphics.getFontHeight(fit[:valueFont] as FontType);
             if (fh > maxH) {
                 maxH = fh;
@@ -446,13 +423,44 @@ class EbikeDataField extends WatchUi.DataField {
         // +8, not +2: _drawCell re-fits with availH = h - 6, so the band must
         // carry maxH + labelH + 6 or the tallest fitted font is rejected at
         // draw time and every companion cell drops one size.
-        return maxH + labelH + 8;
+        var band = maxH + labelH + 8;
+        if (band > budget) {
+            band = budget;
+        }
+        return band;
+    }
+
+    //! Height the gauge band must keep: the cap arc's own depth at the lowest
+    //! theta it will ever use (55 deg) plus half the pen width and a margin.
+    //! Replaces a hard-coded minimum that ignored the screen size, so rows can
+    //! never grow into the space the arc needs to render whole.
+    //! It ALSO reserves the height the power number needs to render one size
+    //! above the plain-text fonts: the number is the point of the gauge, so it
+    //! must not be squeezed into FONT_LARGE just because the companion rows
+    //! claimed the screen first. The rows are fitted to what is left (their
+    //! budget `avail` already follows this floor), and the value fit still
+    //! degrades on its own if even this floor is not enough.
+    private function _minGaugeH(w as Number, h as Number, showLabels as Boolean) as Number {
+        var screenR = (w < h ? w : h) / 2;
+        var r = screenR - 10;
+        if (r < 30) {
+            r = 30;
+        }
+        var depth = (r * (1.0 - Math.cos(55.0 * Math.PI / 180.0))).toNumber();
+        var geom = depth + 16;
+        var labelH = showLabels ? Graphics.getFontHeight(Graphics.FONT_XTINY) + 2 : 0;
+        var need = Graphics.getFontHeight(Graphics.FONT_NUMBER_MEDIUM) + labelH + 6;
+        var cap = (h * 6) / 10;
+        if (need > cap) {
+            need = cap;
+        }
+        return geom > need ? geom : need;
     }
 
     //! Draws a companion row as n equal cells centered in [x, x+w].
     private function _drawValueRow(dc as Dc, cells as Array<Dictionary>, x as Number, y as Number, w as Number, h as Number, showLabels as Boolean) as Void {
         var n = cells.size();
-        if (n == 0) {
+        if (n == 0 || h <= 0) {
             return;
         }
         var cellW = w / n;
@@ -470,32 +478,33 @@ class EbikeDataField extends WatchUi.DataField {
     //! RIGHT, FTP at the zenith (SDK convention: 0 deg = east, 90 = top).
     //! Seven EQUAL segments (each 2/7 FTP) read grey, light blue, light green,
     //! yellow (FTP centered), orange, red, purple; the needle is a short radial
-    //! stub just inside the arc; the value (plus an optional label) sits
-    //! centered under the cap's chord.
+    //! stub just inside the arc; the value (3 s average of the rider power, plus
+    //! an optional label and a small "3s" after the W) is tucked as high as it
+    //! can go inside the cap while still clearing the needle's sweep.
+    //! NB: this frame is big and the simulator VM stack is shallow, so NO user
+    //! class method may be invoked from here (not even _fmt0): the formatted
+    //! value and the font fit are both handed in through `fit`.
     private function _drawPowerGauge(dc as Dc, model as EbikeData, safe as Dictionary, gaugeY as Number, gaugeH as Number, ftp as Number, fg as ColorType, showLabels as Boolean, fit as Dictionary) as Void {
-        var fw = dc.getWidth();
-        var fh = dc.getHeight();
-        var x = safe[:x] as Number;
-        var w = safe[:w] as Number;
-
-        var value = _fmt0(model.powerW);
+        var value = fit[:value] as String;
         var wid = WatchUi.loadResource(Rez.Strings.W);
         var vf = fit[:valueFont] as FontType;
         var showUnit = fit[:showUnit] as Boolean;
         var vh = Graphics.getFontHeight(vf);
         var labelH = showLabels ? Graphics.getFontHeight(Graphics.FONT_XTINY) + 2 : 0;
-        var blockH = vh + labelH + 2;
+        var uf = Graphics.FONT_XTINY;
+        var uw = dc.getTextWidthInPixels(wid, uf);
+        var sw = dc.getTextWidthInPixels("3s", uf);
+        var vw = dc.getTextWidthInPixels(value, vf);
 
         // Arc circle = display circle. The arc is concentric with the screen,
         // so its zenith IS the top of the visible circle: ride the very top
         // edge, no inset. (Clamping the crown under safe.top pulled it down by
         // the whole top inset and left exactly the dead space above the arc
         // that was reported.)
-        var screenR = (fw < fh ? fw : fh) / 2;
-        var cx = (fw / 2).toNumber();
-        var scy = (fh / 2).toNumber();
+        var cx = (dc.getWidth() / 2).toNumber();
+        var scy = (dc.getHeight() / 2).toNumber();
         var bw = 21;
-        var r = (screenR - bw / 2).toNumber();
+        var r = ((dc.getWidth() < dc.getHeight() ? dc.getWidth() : dc.getHeight()) / 2 - bw / 2).toNumber();
         if (r < 30) {
             r = 30;
         }
@@ -505,7 +514,7 @@ class EbikeDataField extends WatchUi.DataField {
         // floor is 55, so a full 10h-14h cap is what actually renders; the
         // shrink above is only a last-resort guard for a very short field.
         var theta = 60.0;
-        var maxCos = 1.0 - (gaugeH - blockH).toFloat() / r.toFloat();
+        var maxCos = 1.0 - (gaugeH - vh - labelH - 2).toFloat() / r.toFloat();
         if (maxCos > -1.0 && maxCos < 1.0) {
             var thetaLim = Math.acos(maxCos) * 180.0 / Math.PI;
             if (theta > thetaLim) {
@@ -536,10 +545,9 @@ class EbikeDataField extends WatchUi.DataField {
             Graphics.COLOR_RED,      // 1.43 .. 1.71
             Graphics.COLOR_PURPLE    // 1.71 .. 2.00
         ];
-        var seg = 2.0 / 7.0;
         for (var i = 0; i < zoneColors.size(); i++) {
-            var fLo = (i * seg) / 2.0;
-            var fHi = ((i + 1) * seg) / 2.0;
+            var fLo = i / 7.0;
+            var fHi = (i + 1) / 7.0;
             dc.setColor(zoneColors[i] as ColorType, Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(bw);
             dc.drawArc(cx, scy, r, Graphics.ARC_CLOCKWISE, (a1 - 2.0 * theta * fLo).toNumber(), (a1 - 2.0 * theta * fHi).toNumber());
@@ -550,7 +558,7 @@ class EbikeDataField extends WatchUi.DataField {
 
         // Partial needle: a short radial stub just inside the arc, at the
         // current power, clamped at the gauge ends (0 and 2*FTP).
-        var power = model.powerW;
+        var power = model.powerW3s;
         if (power != null) {
             var f = power.toFloat() / (2.0 * ftp);
             if (f < 0.0) {
@@ -561,22 +569,30 @@ class EbikeDataField extends WatchUi.DataField {
             }
             var alpha = (a1 - 2.0 * theta * f) * Math.PI / 180.0;
             var ri = (r - 29).toNumber();
-            var ro = (r - 8).toNumber();
             var xi = (cx + (ri * Math.cos(alpha)).toNumber()).toNumber();
             var yi = (scy - (ri * Math.sin(alpha)).toNumber()).toNumber();
-            var xo = (cx + (ro * Math.cos(alpha)).toNumber()).toNumber();
-            var yo = (scy - (ro * Math.sin(alpha)).toNumber()).toNumber();
+            ri = (r - 8).toNumber();
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(6);
-            dc.drawLine(xi, yi, xo, yo);
+            dc.drawLine(xi, yi, (cx + (ri * Math.cos(alpha)).toNumber()).toNumber(), (scy - (ri * Math.sin(alpha)).toNumber()).toNumber());
         }
         dc.setPenWidth(1);
 
-        // Value (+ optional label) centered under the cap's chord.
-        var chordY = (scy - (r * Math.cos(tRad)).toNumber()).toNumber();
-        var valCx = (x + w / 2).toNumber();
+        // Value (+ optional label) tucked HIGH inside the cap: as close to the arc
+        // as the needle's sweep allows. The needle lives at radius r-29..r-8, so
+        // the block's top corners have to stay inside r-29-8 or the needle
+        // would cut through the digits around the FTP zone.
+        var valCx = ((safe[:x] as Number) + (safe[:w] as Number) / 2).toNumber();
         dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
-        var topY = chordY + 1;
+        var topY = (scy - (r * Math.cos(tRad)).toNumber()).toNumber() + 1;
+        var halfW = (vw + (showUnit ? uw + 1 + sw : 0)) / 2 + 2;
+        var riseSq = (r - 37) * (r - 37) - halfW * halfW;
+        if (riseSq > 0 && scy - Math.sqrt(riseSq.toFloat()).toNumber() < topY) {
+            topY = scy - Math.sqrt(riseSq.toFloat()).toNumber();
+        }
+        if (topY < scy - r + bw / 2 + 4) {
+            topY = scy - r + bw / 2 + 4;
+        }
         if (showLabels) {
             dc.drawText(valCx, topY, Graphics.FONT_XTINY, WatchUi.loadResource(Rez.Strings.Power), Graphics.TEXT_JUSTIFY_CENTER);
             topY += labelH;
@@ -584,20 +600,15 @@ class EbikeDataField extends WatchUi.DataField {
         if (topY + vh > gaugeY + gaugeH) {
             topY = gaugeY + gaugeH - vh;
         }
-        var uf = Graphics.FONT_XTINY;
-        var uw = dc.getTextWidthInPixels(wid, uf);
-        var vw = dc.getTextWidthInPixels(value, vf);
         if (showUnit) {
-            var total = vw + 1 + uw;
-            var vx = valCx - total / 2;
-            var ux = vx + vw + 1;
+            var vx = valCx - (vw + uw + sw + 2) / 2;
             var uy = topY + vh - Graphics.getFontHeight(uf);
             dc.drawText(vx + vw / 2, topY, vf, value, Graphics.TEXT_JUSTIFY_CENTER);
-            dc.drawText(ux, uy, uf, wid, Graphics.TEXT_JUSTIFY_LEFT);
+            dc.drawText(vx + vw + 1, uy, uf, wid, Graphics.TEXT_JUSTIFY_LEFT);
+            dc.drawText(vx + vw + 1 + uw + 1, uy, uf, "3s", Graphics.TEXT_JUSTIFY_LEFT);
         } else {
             dc.drawText(valCx, topY, vf, value, Graphics.TEXT_JUSTIFY_CENTER);
         }
-        _lastValueFont = vf;
     }
 
     //! Largest value font whose value+unit fit horizontally and vertically.
@@ -606,8 +617,7 @@ class EbikeDataField extends WatchUi.DataField {
     //! The tallest font that fits wins, so the list order does not matter.
     private function _fitValueFont(dc as Dc, value as String, unit as String, w as Number, h as Number, showLabels as Boolean) as Dictionary {
         var ladder = [Graphics.FONT_NUMBER_HOT, Graphics.FONT_NUMBER_MILD, Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_LARGE, Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_XTINY];
-        var unitFont = Graphics.FONT_XTINY;
-        var uw = dc.getTextWidthInPixels(unit, unitFont);
+        var uw = dc.getTextWidthInPixels(unit, Graphics.FONT_XTINY);
         var availW = w - 6;
         var availH = h - 6;
         var labelH = showLabels ? Graphics.getFontHeight(Graphics.FONT_XTINY) + 2 : 0;
@@ -633,109 +643,32 @@ class EbikeDataField extends WatchUi.DataField {
         var withLabel = showLabels;
         var fit = _fitValueFont(dc, value, unit, w, h, withLabel);
         var vf = fit[:valueFont] as FontType;
-        var lf = Graphics.FONT_XTINY;
-        var labelH = withLabel ? Graphics.getFontHeight(lf) : 0;
+        var labelH = withLabel ? Graphics.getFontHeight(Graphics.FONT_XTINY) : 0;
         if (withLabel && Graphics.getFontHeight(vf) + labelH + 2 > h - 6) {
             withLabel = false;
             fit = _fitValueFont(dc, value, unit, w, h, false);
             vf = fit[:valueFont] as FontType;
             labelH = 0;
         }
-        _lastValueFont = vf;
         var showUnit = fit[:showUnit] as Boolean;
 
-        var vh = Graphics.getFontHeight(vf);
+        // NB: kept deliberately lean - this frame sits under onUpdate +
+        // _drawMetrics + _drawValueRow, and the VM stack is shallow.
         var gap = withLabel ? 2 : 0;
-        var blockH = vh + labelH + gap;
-        var top = y + (h - blockH) / 2;
+        var top = y + (h - Graphics.getFontHeight(vf) - labelH - gap) / 2;
         var valueY = top + labelH + gap;
         var cx = x + w / 2;
         var vw = dc.getTextWidthInPixels(value, vf);
 
         if (showUnit) {
-            var uf = Graphics.FONT_XTINY;
-            var uw = dc.getTextWidthInPixels(unit, uf);
-            var total = vw + 1 + uw;
-            var vx = cx - total / 2;
-            var ux = vx + vw + 1;
-            var uy = valueY + vh - Graphics.getFontHeight(uf);
+            var vx = cx - (vw + 1 + dc.getTextWidthInPixels(unit, Graphics.FONT_XTINY)) / 2;
             dc.drawText(vx + vw / 2, valueY, vf, value, Graphics.TEXT_JUSTIFY_CENTER);
-            dc.drawText(ux, uy, uf, unit, Graphics.TEXT_JUSTIFY_LEFT);
+            dc.drawText(vx + vw + 1, valueY + Graphics.getFontHeight(vf) - Graphics.getFontHeight(Graphics.FONT_XTINY), Graphics.FONT_XTINY, unit, Graphics.TEXT_JUSTIFY_LEFT);
         } else {
             dc.drawText(cx, valueY, vf, value, Graphics.TEXT_JUSTIFY_CENTER);
         }
         if (withLabel) {
-            dc.drawText(cx, top, lf, label, Graphics.TEXT_JUSTIFY_CENTER);
-        }
-    }
-
-    private function _fontLetter(f as FontType) as String {
-        if (f == Graphics.FONT_NUMBER_HOT) {
-            return "O";
-        }
-        if (f == Graphics.FONT_NUMBER_MILD) {
-            return "D";
-        }
-        if (f == Graphics.FONT_NUMBER_MEDIUM) {
-            return "nM";
-        }
-        if (f == Graphics.FONT_LARGE) {
-            return "L";
-        }
-        if (f == Graphics.FONT_MEDIUM) {
-            return "M";
-        }
-        if (f == Graphics.FONT_SMALL) {
-            return "S";
-        }
-        return "X";
-    }
-
-    private function _obscureString(flags as Number) as String {
-        var parts = "";
-        if ((flags & OBSCURE_TOP) != 0) {
-            parts += "T";
-        }
-        if ((flags & OBSCURE_BOTTOM) != 0) {
-            parts += "B";
-        }
-        if ((flags & OBSCURE_LEFT) != 0) {
-            parts += "L";
-        }
-        if ((flags & OBSCURE_RIGHT) != 0) {
-            parts += "R";
-        }
-        if (parts.length() == 0) {
-            parts = "-";
-        }
-        return parts;
-    }
-
-    private var _lastDebugLine as String = "";
-
-    //! Prints the one-line layout/debug summary to the console instead of
-    //! drawing it on screen, so the watch face stays clean. Only prints when
-    //! the line changed, to avoid spamming the console every second.
-    private function _printDebugInfo(fw as Number, fh as Number, safe as Dictionary, ftp as Number, row2n as Number, row3n as Number, titleH as Number, showLabels as Boolean) as Void {
-        var w = safe[:w] as Number;
-        var h = safe[:h] as Number;
-        var flags = safe[:flags] as Number;
-        var top = safe[:top] as Number;
-        var bottom = safe[:bottom] as Number;
-        var left = safe[:left] as Number;
-        var right = safe[:right] as Number;
-        var line = "F" + fw.toString() + "x" + fh.toString()
-            + " S" + w.toString() + "x" + h.toString()
-            + " ftp" + ftp.toString()
-            + " r2=" + row2n.toString() + " r3=" + row3n.toString()
-            + " t" + titleH.toString()
-            + " f" + _fontLetter(_lastValueFont)
-            + " lbl" + (showLabels ? "1" : "0")
-            + " O:" + _obscureString(flags)
-            + " i" + top.toString() + "/" + bottom.toString() + "/" + left.toString() + "/" + right.toString();
-        if (!line.equals(_lastDebugLine)) {
-            _lastDebugLine = line;
-            System.println(line);
+            dc.drawText(cx, top, Graphics.FONT_XTINY, label, Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
@@ -815,7 +748,7 @@ class EbikeField extends Application.AppBase {
     }
 
     public function getSettingsView() as [Views] or [Views, InputDelegates] or Null {
-        var menu = new $.EbikeSettingsMenu(_ble);
+        var menu = new $.EbikeSettingsMenu();
         return [menu, new $.EbikeSettingsMenuDelegate(menu)];
     }
 }

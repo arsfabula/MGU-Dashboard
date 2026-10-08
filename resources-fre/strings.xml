@@ -19,8 +19,6 @@
     <string id="Scanning">Recherche...</string>
     <string id="BleError">BLE indisponible</string>
     <string id="Waiting">En attente...</string>
-    <string id="NothingSelected">Rien de sélectionné</string>
-    <string id="Speed">Vitesse</string>
     <string id="Power">Puissance</string>
     <string id="Motor">Moteur</string>
     <string id="MotorPower">Puissance moteur</string>
@@ -28,7 +26,4 @@
     <string id="Assist">Assistance</string>
     <string id="DemoMode">Mode démo</string>
     <string id="Labels">Libellés</string>
-    <string id="Debug">Debug (mesures)</string>
-    <string id="AssistLevel">Niveau d'assistance</string>
-    <string id="AssistOff">ARRÊT</string>
 </resources>

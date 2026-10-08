@@ -24,9 +24,6 @@ class Cap {
         }
         var type = packet[2];
         if (type != CAP_TYPE_PDO && type != CAP_TYPE_HEARTBEAT) {
-            if (EbikeConfig.isDebug()) {
-                System.println("CAP type=" + type.toString() + " hex=" + _hex(packet));
-            }
             return null;
         }
         return new CapFrame(type, packet.slice(3, packet.size()));

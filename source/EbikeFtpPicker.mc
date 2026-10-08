@@ -23,10 +23,9 @@ class EbikeFtpPickerFactory extends WatchUi.PickerFactory {
     }
 
     public function getDrawable(item as Number, isSelected as Boolean) as Drawable or Null {
-        var value = item * 5;
-        var label = value == 0
-            ? WatchUi.loadResource(Rez.Strings.FtpAuto)
-            : value.toString() + " " + WatchUi.loadResource(Rez.Strings.W);
+        // Shared with the menu row: item 0 reads "Auto <resolved> W" so the
+        // wheel shows exactly what auto will use.
+        var label = $.EbikeSettingsMenu._ftpLabel(item * 5);
         return new WatchUi.Text({
             :text => label,
             :locX => WatchUi.LAYOUT_HALIGN_CENTER,

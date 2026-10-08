@@ -1,9 +1,11 @@
+import Toybox.Activity;
 import Toybox.Application;
 import Toybox.Lang;
+import Toybox.System;
+import Toybox.UserProfile;
 
 const CFG_KEY_DEMO = "cfg.demo";
 const CFG_KEY_LABELS = "cfg.labels";
-const CFG_KEY_DEBUG = "cfg.debug";
 const CFG_KEY_METRIC_MOTOR_POWER = "cfg.metric.motorpower";
 const CFG_KEY_METRIC_CADENCE = "cfg.metric.cadence";
 const CFG_KEY_METRIC_ASSIST = "cfg.metric.assist";
@@ -20,10 +22,6 @@ class EbikeConfig {
 
     public static function showLabels() as Boolean {
         return _getBool($.CFG_KEY_LABELS, true);
-    }
-
-    public static function isDebug() as Boolean {
-        return _getBool($.CFG_KEY_DEBUG, false);
     }
 
     public static function isMetricEnabled(key as String) as Boolean {
@@ -48,6 +46,36 @@ class EbikeConfig {
         }
         return v;
     }
+
+    //! Rider FTP the "auto" setting actually resolves to: the user profile's
+    //! cycling FTP when the API is exposed, otherwise 200 W. This is what the
+    //! gauge scales against AND what the settings menu / picker show next to
+    //! "Auto", so both always agree. The profile read is feature-gated
+    //! (getFunctionalThresholdPower exists only from API 5.2.2 on a subset of
+    //! bodies) and cached per session; a failed/absent read is retried on the
+    //! next call and still yields 200 W.
+    public static function autoFtp() as Number {
+        var profile = _profileFtp;
+        if (profile == null) {
+            if (UserProfile has :getFunctionalThresholdPower) {
+                try {
+                    var v = UserProfile.getFunctionalThresholdPower(Activity.SPORT_CYCLING);
+                    if (v instanceof Number && (v as Number) > 0) {
+                        profile = v as Number;
+                    }
+                } catch (ex) {
+                }
+            }
+            _profileFtp = profile;
+        }
+        if (profile != null && profile > 0) {
+            return profile as Number;
+        }
+        return 200;
+    }
+
+    //! Profile FTP read once per session (null until it can be read).
+    private static var _profileFtp as Number? = null;
 
     private static function _getInt(key as String, def as Number) as Number {
         var value = Application.Storage.getValue(key);

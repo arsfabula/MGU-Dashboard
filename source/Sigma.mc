@@ -20,7 +20,7 @@ class Sigma {
         }
         model.speedKmh = _u16(d, 0) / 10.0;
         model.tripDistanceKm = _u32(d, 2) / 1000.0;
-        model.powerW = _u16(d, 6);
+        model.setPower(_u16(d, 6));
         model.torqueNm = d[8];
         model.cadenceRpm = d[9];
     }

@@ -1,6 +1,6 @@
 # PASSATION — reprendre ce projet dans une NOUVELLE session opencode
 
-> **STATUT 2026-09-29.** Le data field Sigma/FD6D est **fonctionnel et validé
+> **STATUT 2026-10-08.** Le data field Sigma/FD6D est **fonctionnel et validé
 > terrain**. Depuis la session précédente : la **puissance cycliste est passée en
 > jauge radiale** (arc concentrique épousant le **contour supérieur** de l'écran,
 > échelle 0→2×FTP, zones de couleur, aiguille, valeur centrée sous la calotte), avec
@@ -10,6 +10,12 @@
 > feature-gated, non exposé sur `venusq2`/`epix2pro42mm` → repli **200 W**). Le toggle
 > « CyclistPower » a disparu (la puissance est toujours affichée). Les 2 cibles
 > (`venusq2`, `epix2pro42mm`) compilent : `BUILD SUCCESSFUL` à `-l 0` **et** `-l 2`.
+> **2026-10-08** : app **allégée pour la publication** — l'export du store
+> échouait sur `enduro` (28 Ko max) ; coupes A–G (debug, logs, diagnostics,
+> assistance morte, `archive/`) → **26668 B sur 32768** (voir entrée
+> 2026-10-08 du §7 + pièges #18/#19). L'export de publication est **prêt à
+> relancer** ; reste à valider l'ajout de `enduro4`/`approachs724x` au
+> `manifest.xml` et un passage sur la montre.
 >
 > Objectif de cette passation : permettre à une session neuve de continuer
 > **sans dépendre de la mémoire de la session précédente**. Lire ce doc en
@@ -70,9 +76,16 @@ Bandes fixes, de haut en bas :
    `gris` (`COLOR_LT_GRAY`), `bleu clair`, `vert clair`, **`jaune` (FTP centré)**,
    `orange`, `rouge`, **`violet`** (`COLOR_PURPLE`). Plus d'encoche FTP.
    **Aiguille en moignon radial** (segment `r-29..r-8`, pen 6) en couleur `fg`
-   pointant `model.powerW` (bornée à [0, 2·FTP]) ; **valeur centrée** sous la
-   corde de la calotte. Rendu par `drawArc` + `setPenWidth` (le SDK 9.2 **n'a
-   pas** `fillArc`).
+   pointant `model.powerW3s` (**moyenne glissante 3 s**, bornée à [0, 2·FTP]).
+   **Valeur remontée À L'INTÉRIEUR de la calotte**, juste sous la portée de
+   l'aiguille (plus sous la corde) : `topY = min(corde+1, scy - √((r-37)² -
+   demiLargeur²))`, borné en haut par le bandeau d'arc (`scy - r + bw/2 + 4`) et
+   en bas par le bas du bandeau jauge. Le bord haut du bloc (label compris) reste
+   à ≥ 8 px sous `r-37`, donc **l'aiguille ne traverse jamais les chiffres** ;
+   gain mesuré ≈ **40 px vers le haut** en 416×416 (`topY` 110 → ~70).
+   Unité `W` + suffixe **`3s`** (FONT_XTINY, même fg, 1 px d'écart) dessinés à
+   droite de la valeur quand `showUnit`. Rendu par `drawArc` + `setPenWidth`
+   (le SDK 9.2 **n'a pas** `fillArc`).
 2. **Bande Moteur / Cadence / Assistance** : cellules égales (toggles §menu).
 3. **Bande Batterie / Autonomie** : idem.
 4. **Titre** (nom du vélo, « MGU Demo » en démo) en **pied**, **descendu dans
@@ -82,10 +95,41 @@ Bandes fixes, de haut en bas :
    (nom de vélo trop long → troncature `...`).
 
 Sacrifices si hauteur insuffisante : titre, puis bande du bas ; la jauge garde
-toujours sa place (min 72 px, `MIN_GAUGE_H`). Hauteur de bande secondaire :
+toujours sa place avec le plancher `_minGaugeH(w, h, showLabels)` = **max** de
+— la profondeur de la calotte à θ = 55° + 16 px (≈ **100 px** en 416×416, ≈53 px
+en 205×205) ;
+— la **hauteur qu'exige la valeur** : `getFontHeight(FONT_NUMBER_MEDIUM) +
+labelH + 6`, plafonnée à `h·6/10` pour que les lignes 2/3 ne disparaissent pas
+sur un écran court.
+Ce 2ᵉ terme garantit que la puissance rend au minimum en **FONT_NUMBER_MEDIUM**
+(une taille au-dessus de `FONT_LARGE`), demandé le 2026-10-07. Diagnostic à
+l'appui : avant, les lignes naturelles occupaient tout le quota
+`avail = h - titleH - minG`, la jauge retombait au plancher (~100–127 px mesuré)
+et le fit tombait en `FONT_LARGE` — **la hauteur bloquait, pas la largeur**
+(`ww ≥ 80` de marge, `hh < 0`), `FONT_NUMBER_MEDIUM` échouait de 32 à 64 px.
+Le terme géométrique garde son rôle d'origine ; l'ancienne constante
+`MIN_GAUGE_H = 72` a été **supprimée** car elle ignorait la taille d'écran.
+La jauge consomme alors `minG` en priorité (`avail` des lignes en découle) et
+le fit se replie encore si même ce plancher ne suffit pas.
+Hauteur des bandes 2/3 : chaque bande réclame d'abord sa hauteur **naturelle**
+(`_rowBandH(..., budget = h)`) — la fonte n'est **plus bridée par un budget de
+90 px**, elle grandit donc avec l'écran et **s'adapte seule au nombre de
+métriques activées** (largeur de cellule `w/n`). Si
+`row2H + row3H > h - titleH - minG`, le surplus est réparti proportionnellement
+puis **chaque bande est re-fitée à la hauteur qu'elle obtient réellement**
+(`_rowBandH(..., budget)`, retour **borné au budget**) : le dessin ne peut donc
+plus choisir une fonte plus grande que celle réservée.
 `_rowBandH` renvoie `maxH + labelH + **8**` (et non +2) — sinon `_drawCell`
 re-fit avec `availH = h-6` rejette la plus grande fonte et chaque cellule
 secondaire perd **un cran**.
+
+**Puissance affichée = moyenne glissante 3 s** (`model.powerW3s`) : tampon
+circulaire de 32 slots / `PW_WINDOW_MS = 3000` dans `EbikeData`, rempli par
+`setPower(w)` depuis `Sigma.parseRide` (RX1) **et** `DemoManager.onTick`, moyenne
+arrondie `(somme + n/2)/n`, wrap de `System.getTimer()` géré (`now >= t`).
+Le champ FIT (`EbikeFitContributor`) continue d'enregistrer `powerW`
+**brut** — seul l'écran est lissé. Le suffixe `3s` à côté de l'unité `W` en est
+la trace visible.
 
 | Bande | Métrique | Source | Clé de config | Unités |
 |---|---|---|---|---|
@@ -99,9 +143,12 @@ secondaire perd **un cran**.
   reste **décodé** dans `model.speedKmh` (démo / log), mais aucun affichage.
 - État « **En attente…** » : `!demoMode && model.batterySoc == null &&
   timer - lastUpdate > 10000` (début du chemin de rendu `onUpdate`).
-- **FTP** : `_resolveFtp()` = réglage (`ftpOverride()` > 0) → sinon FTP du profil
-  (`_readProfileFtp`, feature-gated + try/catch + `instanceof Number`, cache
-  `_profileFtp`) → sinon **200 W**.
+- **FTP** : `_resolveFtp()` = réglage (`ftpOverride()` > 0) → sinon
+  `EbikeConfig.autoFtp()` = FTP du profil (`getFunctionalThresholdPower`,
+  feature-gated + try/catch + `instanceof Number`, cache statique
+  `_profileFtp`) → sinon **200 W**. La résolution **« auto » est partagée** :
+  le champ ET le menu/la roue appellent la même `autoFtp()`, donc l'échelle de
+  la jauge et la valeur affichée près de « Auto » ne peuvent pas diverger.
 - **Fonts** : `_fitValueFont` (`EbikeField.mc`) = échelle **order-indépendante
   du plus grand font qui rentre** : candidats `FONT_NUMBER_HOT/MILD/MEDIUM` puis
   `FONT_LARGE/MEDIUM/SMALL/XTINY`. `_fontLetter` mappe le font retenu.
@@ -118,13 +165,20 @@ secondaire perd **un cran**.
 
 ### Menu réglages (`EbikeSettings.mc`)
 
-Toggles : Demo, Libellés, **MotorPower**, Cadence, Assistance, Battery, Range,
-Debug (le toggle **CyclistPower a disparu** : la jauge l'affiche toujours).
-Item **FTP** : `MenuItem` id `CFG_KEY_FTP`, sous-libellé « Auto » ou « NN W »,
-ouvre un `WatchUi.Picker` (81 items = 0..400 W par pas de 5, `0` = **Auto**) —
-voir `EbikeFtpPicker.mc`. Le **niveau d'assistance est retiré du menu** (lignes
-commentées, code conservé : `onAssistSelected`, `_assistLabel`,
-`CFG_KEY_ASSIST_LEVEL`, `BleManager.setAssistLevel`).
+Toggles : Demo, Libellés, **MotorPower**, Cadence, Assistance, Battery, Range
+(le toggle **CyclistPower a disparu** : la jauge l'affiche toujours ; le toggle
+**Debug a supprimé le 2026-10-08** pour la publication, voir §8).
+Item **FTP** : `MenuItem` id `CFG_KEY_FTP`, sous-libellé « NN W » ou — quand le
+réglage est sur **auto** — **« Auto <valeur réellement résolue> W »**
+(`_ftpLabel(ftp)` : `ftp <= 0` → `FtpAuto + " " + autoFtp() + " " + W`, ex.
+*Auto 203 W*), demande du 2026-10-07. La roue du `WatchUi.Picker` (81 items =
+0..400 W par pas de 5, `0` = **Auto**) affiche **le même `_ftpLabel`** : l'item
+`Auto` y porte donc aussi la valeur résolue — voir `EbikeFtpPicker.mc`. Le
+**niveau d'assistance a été retiré du menu** : `onAssistSelected`,
+`_assistLabel`, `_assistItem` et le bloc commenté ont été **supprimés le
+2026-10-08** (`archive/Assist.mc.bak` conserve la logique). `_ble` a disparu du
+menu (le constructeur ne prend plus d'argument) ; seule la **restauration au
+démarrage** vit encore (`EbikeField` → `BleManager.setAssistLevel`).
 
 ### FIT (`fitcontributions.xml` + `EbikeFitContributor.mc`)
 
@@ -196,10 +250,17 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
 
 - `EbikeField.mc` — data field / affichage / `_fitValueFont` (le plus gros fichier).
 - `BleManager.mc` — BLE : scan, connexion, dispatch RX1/RX2/RX3/RX7, heartbeat TX,
-  helpers `_decoded*`, `setAssistLevel` (assistance archivée).
+  `setAssistLevel`. **Jonct. 2026-10-08** : log BLE supprimé
+  (helpers `_decoded*`, `_charTag`, `_hex(_C)`, `_appendHex`, `line`, `_pendingLog`
+  et le paramètre `log` des 2 queue-functions ont disparu ; plus aucun
+  `System.println` dans tout le projet).
 - `Sigma.mc` — parseurs `parseRide` / `parseMotor` / `parseBattery` / `parseAssist`.
-- `EbikeData.mc` — modèle partagé (`_model`).
-- `EbikeConfig.mc` — clés de stockage + accès (`ftpOverride()`).
+- `EbikeData.mc` — modèle partagé (`_model`). **Jonct. 2026-10-08** : les 12
+  champs de diagnostic (`profileStatus`, `serviceFound`, `rxCharFound`,
+  `cccdOk`, `fd6d*`, `rxCount`, `rxOtherCount`, `lastRxHex`/`lastRxOtherHex`,
+  `lastError`…) supprimés.
+- `EbikeConfig.mc` — clés de stockage + accès (`ftpOverride()`, **`autoFtp()`**
+  = résolution « auto » partagée champ ↔ menu, cache `_profileFtp`).
 - `EbikeSettings.mc` — menu réglages (Menu2) + delegate.
 - `EbikeFtpPicker.mc` — roue de sélection FTP (`PickerFactory` + `PickerDelegate`).
   ⚠️ **fond du `Picker` = NOIR, texte = BLANC** (comme l'échantillon SDK
@@ -209,8 +270,10 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
 - `EbikeFitContributor.mc` — champs FIT.
 - `DemoManager.mc` — données simulées (`motorPowerW`, `assistMode` cyclique 1..4).
 
-**Archive** (`archive/`, hors compilation) : `Bcp.mc`, `Cap.mc`, `Pdo.mc`,
-`Assist.mc`.
+**Archive** (`archive/`, **renommé `.mc.bak` → hors compilation depuis
+2026-10-08**) : `Bcp.mc.bak`, `Cap.mc.bak`, `Pdo.mc.bak`, `Assist.mc.bak`.
+⚠️ ces 4 classes mortes coûtaient **5,1 Ko** au PRG (monkeyc ne « strip » pas) —
+voir piège #18.
 
 **Docs** : `docs/PROTOCOL.md` (protocole), `docs/BUILD.md` (compilation),
 `docs/QUICKSTART-FR.md` / `docs/QUICKSTART-EN.md` (guide utilisateur),
@@ -220,9 +283,10 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
 
 ## 5. Ce qu'il reste à faire (pistes, non bloquant)
 
-1. **RX5 non décodé** : observé mais loggé brut. Si utile, ajouter
-   `parseDiagnostic` + un `_decodedDiagnostic` (unités à confirmer : distance
-   57000 = m ?, 2ᵉ u32 = temps ?).
+1. **RX5 non décodé** : jamais exploité. Si utile un jour, il faut le
+   **réintroduire** (le log BLE a été supprimé le 2026-10-08 — les 3 octets nuls
+   des slots d'endurance/recovery sont interprétés comme 0) ; unités à confirmer
+   (distance 57000 = m ?, 2ᵉ u32 = temps ?) — cf. `archive/Bcp.mc.bak`.
 2. **RX2 `d[9]` (assist %)** : non mappé. Le champ `model.assistPercent` existe
    (inutilisé) — on peut l'alimenter si on veut afficher le **% d'assistance** en
    plus du **mode** (RX7).
@@ -232,7 +296,8 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
    heartbeat + `fit.update` portés par le flux RX (`onCharacteristicChanged`),
    moyennes gated à 1 Hz, voir §FIT. Reste à valider sur le terrain + confirmer
    que `onTimer*` arrive page cachée.
-5. **RX4/RX6/RX8** : jamais vus ; restent loggés bruts.
+5. **RX4/RX6/RX8** : jamais vus ; le log BLE qui les montrait brut a été
+   supprimé (2026-10-08) — réintroduire uniquement si besoin.
 6. ~~**Erreur typecheck stricte (`-l 2`)**~~ : **fait** — `_assistItem` nullable
    (2026-09-29), + cette session la jauge/FTP compilent en `-l 2` sur
    `venusq2` et `epix2pro42mm`.
@@ -327,6 +392,55 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
     _drawPowerGauge`). Fix structurel : le fit est calculé dans `_drawMetrics`
     (mêmes appels, ça passe) et passé en paramètre à la jauge. Ne pas remettre
     d'appel de classe dans `_drawPowerGauge`.
+16. **Budget de cadres VM partagé (2026-10-07)** : la limite n'est pas
+    « `_drawPowerGauge` appelle une classe », c'est la **profondeur cumulée**
+    `onUpdate + _drawMetrics + cadre + appelé`. Ajouter 3 `var` locaux dans
+    `_drawMetrics` a **déplacé** le crash de la jauge vers la chaîne la plus
+    profonde `_drawValueRow → _drawCell → _fitValueFont` (« Stack Overflow /
+    Failed invoking \<symbol\> » à l'entrée de `_fitValueFont`). Règles
+    appliquées et à conserver :
+    - `_drawPowerGauge` **n'invoque aucun appel de classe**, pas même `_fmt0` :
+      la chaîne formatée est portée par `gfit[:value] = _fmt0(...)` posé dans
+      `_drawMetrics` ;
+    - `_drawCell` est maintenu **volontairement maigre** (11 locaux au lieu de
+      19 : `lf/uf/total/ux/uy/blockH/vh` inlinés) car il est au fond de la
+      chaîne ; `_fitValueFont` aussi (`unitFont` inliné) ;
+    - toute évolution de `_drawMetrics` doit **compenser** ses locaux ailleurs,
+      sinon le prochain crash apparaîtra au premier appel profond venu.
+    Diagnostic : patch démo (`isDemo() → return true`), `monkeyc -l 2` puis
+    `monkeydo`, log `CIQ_LOG.YML` vidé avant le lancement (un run sans crash y
+    laisse **0 octet**).
+17. **Sortie de debug invisible : la seule voie lisible est le numéro de
+    ligne d'une exception (2026-10-07)** — `System.println` **ne donne rien**
+    dans le simulateur : `CIQ_LOG.YML` ne contient que des blocs d'**erreur**
+    (le message d'une `Exception` déclenchée par `throw` n'y figure **pas**,
+    seulement `Error:` + la **pile avec numéro de ligne**), et rediriger la
+    stdout du `simulator.exe` (`Start-Process -RedirectStandardOutput`) reste
+    à 0 octet. Recette utilisée : `throw new InvalidValueException("…")` posé
+    **sur une ligne dédiée par cas** dans `_drawMetrics` (exemple : un `if`
+    par fonte, un `if` par tranche de valeur) → le numéro de ligne remonté
+    par le log code la donnée. `throw ("…")` et `throw diag` sont **refusés à
+    la compilation** (« Cannot throw object of type String ») ; il faut un
+    objet `Lang.*Exception`. Attention : ce throw tue le premier frame, donc
+    il ne doit pas rester dans une version livrée.
+18. **`archive/` EST compilé par monkeyc (2026-10-08)** : le source path par
+    défaut couvre **tout le dossier projet**, pas seulement `source/`. Les 4
+    classes mortes (`Assist`, `Bcp`, `Cap`, `Pdo`) rentraient donc dans le PRG
+    et pesaient **5,1 Ko** alors que le moteur ne les « strip » pas. Exclusion :
+    **renommer `*.mc` → `*.mc.bak`** (gardées pour référence, plus compilées).
+    Tout `.mc` qui traîne dans le projet est compilé — attention aux copier-coller.
+    Symptôme qui l'a fait découvrir : erreur de compile sur `archive/Cap.mc:27`
+    `:isDebug` alors qu'aucun code ne référençait `Cap`.
+19. **`strings.xml` : les 4 fichiers de langue doivent rester cohérents + le
+    FIT référence des chaînes (2026-10-08)** : supprimer un id dans une langue
+    et pas dans l'autre → « String id undefined for language DEFAULT/FRENCH/… ».
+    Et `resources/fitcontributions.xml` référence `CyclistPower`, `AvgPower`,
+    `AvgCadence`, `MinBattery`, `Rpm`, `Percent`, `Km`, `Mode` → les
+    supprimer fait échouer le build. (Id retirés pour la publication :
+    `Debug`, `Speed`, `NothingSelected`, `AssistLevel`, `AssistOff`. ⚠️ manipuler
+    les fichiers localisés en UTF-8 : un aller-retour via la console PowerShell
+    (codepage) double-encode les accents — recette sûre : extraire via
+    `cmd /c "git show HEAD:<path> > out"` puis éditer les lignes.)
 
 ---
 
@@ -407,3 +521,101 @@ connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
   tableau `zoneColors[]` indexé 0..6 au lieu d'un tableau de dictionnaires.
   `a0` supprimé (gisant). Build `-l 2` OK `venusq2` + `epix2pro42mm`, run sim
   sans crash.
+
+- **2026-10-07** : trois retours utilisateur, tous en place —
+  (1) **chiffre remonté dans la calotte** (sous la portée de l'aiguille, plus
+  sous la corde) : `topY = min(corde+1, scy - √((r-37)² - demiLargeur²))`,
+  né à ≈70 px au lieu de 110 en 416×416, garde-fous haut (`scy - r + bw/2 + 4`)
+  et bas (bas du bandeau jauge) ; aiguille **inchangée** (`r-29..r-8`, pen 6) ;
+  (2) **polices lignes 2/3 dynamiques** : `_rowBandH(..., budget = h)` remplace
+  le budget magique 90, plancher de jauge `_minGaugeH(w,h)` (calotte-aware)
+  remplace `MIN_GAUGE_H = 72`, répartition proportionnelle + re-fit à la
+  hauteur obtenue ; (3) **moyenne glissante 3 s** : `EbikeData.setPower()` +
+  tampon 32 slots / 3000 ms (wrap `getTimer()` géré), appelé par
+  `Sigma.parseRide` **et** `DemoManager.onTick`, affiché par la jauge et
+  l'aiguille avec suffixe **`3s`** ; le FIT reste au **brut** (`powerW`).
+  ⚠️ **Piège #16 découvert en cours de route** : les 2 premières versions
+  crashaient en « Stack Overflow / Failed invoking \<symbol\> » — le 1ᵉʳ dans
+  `_fmt0` appelé depuis la jauge, le 2ᵉ (après +3 locaux dans `_drawMetrics`)
+  à l'entrée de `_fitValueFont` via `_drawValueRow → _drawCell`. Fix :
+  `gfit[:value] = _fmt0(...)` posé dans `_drawMetrics` (la jauge n'appelle
+  **aucun** appel de classe), `_drawCell` allégé de 8 locaux, `_fitValueFont`
+  de 1. Patch démo (`isDemo() → return true`) pendant les tests, reverti par
+  `git checkout -- source/EbikeConfig.mc`. Build `-l 2` OK `venusq2` +
+  `epix2pro42mm`, run sim **démo 30 s sans crash sur les 2 cibles** (log
+  `CIQ_LOG.YML` vidé avant = 0 octet) ; run **sans** démo = crash connu
+  piège #14 (BLE absent du sim). Rendu **non** vérifié visuellement par
+  l'agent (pas de capture lisible) : reste un œil utilisateur.
+
+- **2026-10-07 (suite)** : retour simulateur epix Pro 51 mm « pas de crash, pas
+  de bug » + demande : **fonte de la puissance cycliste un cran au dessus**.
+  Mesure (voir piège #17, `throw` + numéro de ligne) : le fit retenait
+  **`FONT_LARGE`** — ni largeur ni largeur du bloc, **la hauteur** : les lignes
+  2/3 prenaient tout le quota `avail`, la jauge retombait au plancher
+  (`gh ∈ [100,128)` mesuré) et `FONT_NUMBER_MEDIUM` échouait de **32 à 64 px**
+  (marge largeur, elle, ≥ 80 px). Correctif : `_minGaugeH(w, h, showLabels)`
+  rend désormais **max(calotte, `getFontHeight(FONT_NUMBER_MEDIUM) + labelH +
+  6`)** plafonné à `60 %` de la hauteur — les lignes sont re-fittées sur ce qui
+  reste (`avail` suit `minG`), donc la puissance rend **au minimum en
+  FONT_NUMBER_MEDIUM** (une taille au-dessus de `FONT_LARGE`), et le fit se
+  replie encore si le plancher ne suffit pas. Revérifié au `throw` : fonte
+  observée = **FONT_NUMBER_MEDIUM** ; runs démo sans crash sur
+  **epix2pro51mm** et **venusq2** (log 0 octet) ; `monkeyc -l 2` OK
+  `venusq2` + `epix2pro42mm` + **`epix2pro51mm`** (cible ajoutée, c'est la
+  montre de l'utilisateur). Capture d'écran obsolète supprimée par
+  l'utilisateur (reste ` D` dans `git status`, à inclure au commit).
+
+- **2026-10-07 (suite 2)** : menu réglages — quand FTP est sur **auto**, afficher
+  **à côté la valeur réellement résolue** (demande : « quand FTP <auto> est
+  sélectionné, afficher à côté la valeur du FTP »). La résolution a été
+  **extraite du champ** : `EbikeConfig.autoFtp()` (profil `getFunctionalThresholdPower`
+  feature-gated + try/catch, cache statique `_profileFtp`, repli **200 W**) est
+  désormais l'unique source, consommée par `_resolveFtp()` (champ) et par
+  `EbikeSettingsMenu._ftpLabel()` (sous-ligne du menu **et** item `Auto` de la
+  roue, via `$.EbikeSettingsMenu._ftpLabel(...)` dans
+  `EbikeFtpPickerFactory.getDrawable`) → « **Auto 203 W** » aux deux endroits,
+  jamais deux valeurs différentes. `_readProfileFtp`/`_profileFtp` et les
+  imports `Activity`/`UserProfile` ont quitté `EbikeField.mc`. Contrôles :
+`monkeyc -l 2` OK `venusq2` + `epix2pro42mm` + `epix2pro51mm`, run démo sans
+  crash (log 0 octet) avec `isDemo()` patché en `true`, patch reverti.
+
+- **2026-10-08 — réduction mémoire pour l'export de publication** : l'export du
+  store échouait sur `enduro` (« memory below requirement », rapport de
+  l'outil : 32811 B pour 32768) ; SDK local 9.2.0 métre différemment (38170 B
+  pour la même source) → ce qui compte = les **deltas** (mesure :
+  `monkeyc.bat -d enduro -f monkey.jungle -o … -y developer_key.der
+  --build-stats 1`, marge lisible à « Total PRG Size »).
+  Coupes successives (validées via builds enduro + `-l 2` + run démo log
+  0 octet) :
+  - **A. Écran debug supprimé** : toggle `CFG_KEY_DEBUG`, `isDebug()`,
+    `_printDebugInfo`, `_lastDebugLine`, `_fontLetter`, `_obscureString`,
+    `_lastValueFont` (champ + assignations), `Rez.Strings.Debug`. ≈1,6 Ko.
+  - **B. 26 `System.println` supprimés** (24 `BleManager`, 1 `EbikeConfig`,
+    1 `EbikeSettings`). ≈0,5 Ko.
+  - **C. Log BLE supprimé** : `_decoded*`, `_charTag`, `_hex`, `_hexC`,
+    `_appendHex`, `line`, `_pendingLog`, paramètre `log` des 2 queue-functions.
+    ≈0,6 Ko.
+  - **D. Diagnostiques supprimés** : 12 champs de `EbikeData` (dont `lastError`,
+    `rxCount`, `rxOtherCount`, `lastRxHex`) + leurs écritures/`reset()` dans
+    `BleManager` (dont les 10 `lastError`, le `profileStatus`, `serviceFound`,
+    `rxCharFound`, `cccdOk`, `fd6d*`). ≈0,5 Ko.
+  - **E. Code assistance mort supprimé** : `_assistItem`, `_assistLabel`,
+    `onAssistSelected`, branche `else` du delegate, `_ble` du menu
+    (`onAssistSelected` persistait le niveau au tap, alors que la
+    **restauration au démarrage** suffit — `EbikeField` → `setAssistLevel`) ;
+    `Rez.Strings.AssistLevel/AssistOff` retirés.
+  - **F. Chaînes mortes** : `Debug`, `Speed`, `NothingSelected` retirés des
+    4 `strings.xml` (**pas** `CyclistPower/AvgPower/AvgCadence/MinBattery/
+    Rpm/Percent/Km/Mode` : `fitcontributions.xml` les référence → build KO —
+    piège #19).
+  - **G. `archive/` exclu** (piège #18) : `*.mc` → `*.mc.bak` — 4 classes
+    mortes compilées quand même, **5,1 Ko**.
+  Taille `enduro` finale : **26668 B** (Data 6346 + Code 20322) sur 32768
+  (avant : 38170). Contrôles : `monkeyc -l 2` OK `venusq2` +
+  `epix2pro42mm` + `epix2pro51mm`, run démo (patch `isDemo` + revert) log
+  0 octet ; **plus aucun `System.println` dans le projet**, le seul canal de
+  diagnostic reste le `throw` (piège #17).
+  NB : l'outil d'export publié a ajouté **3 produits au `manifest.xml`**
+  (`approachs7243mm`, `approachs7247mm`, `enduro4`) lors de la tentative — à
+  valider avec l'utilisateur avant commit (le `enduro4` ajoute une cible à
+  contrôler).
