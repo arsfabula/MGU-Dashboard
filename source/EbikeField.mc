@@ -10,9 +10,6 @@ class EbikeDataField extends WatchUi.DataField {
     private var _ble as BleManager?;
     private var _demo as DemoManager?;
     private var _fit as EbikeFitContributor?;
-    //! Last assist level sent to the bike, and whether we were connected, so a
-    //! change in the setting (or a new connection) triggers a write.
-    private var _lastAssistSent as Number? = null;
 
     public function initialize(model as EbikeData, ble as BleManager?, demo as DemoManager?) {
         DataField.initialize();
@@ -87,23 +84,6 @@ class EbikeDataField extends WatchUi.DataField {
         }
     }
 
-    //! Pushes the configured assist level to the bike once per connection and
-    //! again whenever the setting changes.
-    //! NOTE: disabled / archived (see archive/Assist.mc) — the call site in
-    //! onUpdate is commented out so no assist level is ever sent to the bike.
-    private function _syncAssist(ble as BleManager) as Void {
-        if (!_model.connected) {
-            _lastAssistSent = null;
-            return;
-        }
-        var level = EbikeConfig.assistLevel();
-        var last = _lastAssistSent;
-        if (last == null || level != last) {
-            _lastAssistSent = level;
-            ble.setAssistLevel(level);
-        }
-    }
-
     //! Make sure the correct data source (demo vs BLE) matches the current
     //! settings, switching if the user changed the mode while this field
     //! instance was kept alive. Returns the current demo mode.
@@ -142,11 +122,6 @@ class EbikeDataField extends WatchUi.DataField {
         var ble = _ble;
         if (demo != null) {
             demo.onTick();
-        } else if (ble != null) {
-            ble.onTick();
-            //! Interaction d'assistance (envoi du niveau au vélo) désactivée /
-            //! archivée — voir archive/Assist.mc. Décommenter pour réactiver.
-            //_syncAssist(ble);
         }
 
         var fit = _fit;

@@ -16,6 +16,11 @@
 > 2026-10-08 du §7 + pièges #18/#19). L'export de publication est **prêt à
 > relancer** ; reste à valider l'ajout de `enduro4`/`approachs724x` au
 > `manifest.xml` et un passage sur la montre.
+> **2026-10-16** : **profil GATT legacy BCP supprimé** (heartbeat TX + assist,
+> déjà sans vivant appelant) — un `registerProfile` de trop faisait remonter une
+> erreur ERA « System Error » sur les montres qui refusent une 2ᵉ définition
+> (piège #20). `enduro` : 26668 → **23673 B / 32768**. ⚠️ **en attente de
+> validation terrain avant push** (le lien BLE tient-il sans heartbeat ?).
 >
 > Objectif de cette passation : permettre à une session neuve de continuer
 > **sans dépendre de la mémoire de la session précédente**. Lire ce doc en
@@ -191,9 +196,10 @@ moy. cadence, batterie mini) ; id8-9 par tour.
 **Enregistrement en continu (champ non affiché)** : `Toybox.Timer` n'existe pas
 dans un data field et `onUpdate` ne tourne que page affichée. Désormais
 `BleManager.onCharacteristicChanged` appelle à chaque trame RX reçue
-`onTick()` (heartbeat 1800 ms) puis `fit.update(_model)` (contributor branché
-via `setFitContributor`) → l'enregistrement FIT continue même quand une autre
-page est visible. Les moyennes restent **échantillonnées à 1 Hz** (gate
+`fit.update(_model)` (contributor branché via `setFitContributor`) →
+l'enregistrement FIT continue même quand une autre page est visible (le
+`onTick()` heartbeat qui l'accompagnait a disparu le 2026-10-16, voir §6 #20).
+Les moyennes restent **échantillonnées à 1 Hz** (gate
 `_lastAvgTime` dans `EbikeFitContributor.update`, neutralise aussi le double
 appel onUpdate+RX). Limite : le mode **demo** (sans BLE) reste lié à `onUpdate`.
 À vérifier sur le terrain : les callbacks `onTimerStart/Pause/Lap` sont-ils
@@ -240,20 +246,23 @@ RX9..RX12 non souscrits (hors sondage).
   (s'incrémente), puis `ff ff ff`.
 - **RX7** `0100`/`0200`/`0300` → **modes 1 / 2 / 3**, start = 0.
 
-**Heartbeat TX** : trame BCP single-frame écrite sur `5e8597ac` (BootUp à la
-connexion, Operational toutes les 1800 ms, Stopped à la déconnexion) —
-`BleManager._sendHeartbeat`. Seul vestige vivant de la pile BCP/CAP/PDO archivée.
+**Heartbeat TX** : **retiré du build le 2026-10-16** (le profil legacy
+`5e8597aa` n'est plus enregistré — voir §6 piège #20). La trame BCP single-frame
+sur `5e8597ac` (BootUp / Operational 1800 ms / Stopped) reste décrite dans
+`docs/PROTOCOL.md` §A.5 à titre d'archive ; `archive/Cap.mc.bak` conserve le
+constructeur de trame.
 
 ---
 
 ## 4. Fichiers sources (`source/`)
 
 - `EbikeField.mc` — data field / affichage / `_fitValueFont` (le plus gros fichier).
-- `BleManager.mc` — BLE : scan, connexion, dispatch RX1/RX2/RX3/RX7, heartbeat TX,
-  `setAssistLevel`. **Jonct. 2026-10-08** : log BLE supprimé
+- `BleManager.mc` — BLE : scan, appairage, **un seul profil GATT** (Sigma/FD6D),
+  dispatch RX1/RX2/RX3/RX7. **Jonc. 2026-10-08** : log BLE supprimé
   (helpers `_decoded*`, `_charTag`, `_hex(_C)`, `_appendHex`, `line`, `_pendingLog`
   et le paramètre `log` des 2 queue-functions ont disparu ; plus aucun
-  `System.println` dans tout le projet).
+  `System.println` dans tout le projet). **2026-10-16** : profil legacy BCP retiré
+  (heartbeats, `setAssistLevel`, `onTick`, `_legacyProfileOk` — voir §6 #20).
 - `Sigma.mc` — parseurs `parseRide` / `parseMotor` / `parseBattery` / `parseAssist`.
 - `EbikeData.mc` — modèle partagé (`_model`). **Jonct. 2026-10-08** : les 12
   champs de diagnostic (`profileStatus`, `serviceFound`, `rxCharFound`,
@@ -301,8 +310,9 @@ voir piège #18.
 6. ~~**Erreur typecheck stricte (`-l 2`)**~~ : **fait** — `_assistItem` nullable
    (2026-09-29), + cette session la jauge/FTP compilent en `-l 2` sur
    `venusq2` et `epix2pro42mm`.
-7. **`Speed` string** et `CFG_KEY_ASSIST_LEVEL`/`assistLevel()` : reliquats
-   inutilisés, sans effet — à nettoyer si on veut.
+7. **Heartbeat / Stability du lien** : supprimés le 2026-10-16 (profil legacy
+   retiré). À valider sur le vélo : la liaison tient-elle > 15 min sans
+   heartbeat ? (le simulateur n'a pas de BLE — impossible de le tester là).
 8. **FTP « Auto » sur appareils non supportés** : `getFunctionalThresholdPower`
    n'est documenté que sur fenix 8, Venu 4/X1, FR 570/970, Edge 8xx/5xx, Enduro 3,
    vivoactive 6, D2 Mach 2 Pro — pas `venusq2` ni `epix2pro*`. Le repli 200 W
@@ -330,16 +340,18 @@ voir piège #18.
    anciens sites (`_ensureMode`, `onStart`, `getInitialView`) ont été corrigés.
    Rappel Monkey C : un `private` n'est pas accessible depuis une méthode
    `static` (crash du compilateur) — passer par un accesseur public.
-2. **Les 2 profils GATT ne s'enregistrent pas au même risque** :
-   `initialize()` traite le profil Sigma/AD (`PROFILE_INDEX_REQUIRED`) en
+2. ~~**Les 2 profils GATT ne s'enregistrent pas au même risque**~~ :
+   **résolu le 2026-10-16** — il n'y a plus qu'**un seul** profil. Historique :
+   `initialize()` traitait le profil Sigma/AD (`PROFILE_INDEX_REQUIRED`) en
    obligatoire — son exception remonte vers `getShared()` — et le profil legacy
-   BCP (`5e8597aa`, heartbeat TX) en « best effort » : un refus met
-   `_legacyProfileOk = false` et les données Sigma fonctionnent quand même.
+   BCP (`5e8597aa`, heartbeat TX) en « best effort » : un refus mettait
+   `_legacyProfileOk = false` et les données Sigma fonctionnaient quand même.
    Les deux étaient dans la même boucle, si bien qu'un appareil refusant la
    2ᵉ définition perdait aussi le profil qui porte toutes les données — observé
    sur un **Edge Explore 2 fw 31.33** (ERA « System Error », 2 occurrences le
    2026-09-25, `initialize:68` ← `onStart:692`). Le profil Sigma/AD garde ses
-   **8 caractéristiques RX1..RX8** : rien n'a été réduit.
+   **8 caractéristiques RX1..RX8** : rien n'a été réduit. Voir piège #20 pour la
+   suppression définitive du profil legacy.
 3. **Une inscription peut aussi échouer sans lever** : `onProfileRegister` reçoit
    un statut non nul et le log (`BleManager: prof FAIL st=…`), distinct de
    l'exception. Les deux cas existent.
@@ -441,15 +453,34 @@ voir piège #18.
     les fichiers localisés en UTF-8 : un aller-retour via la console PowerShell
     (codepage) double-encode les accents — recette sûre : extraire via
     `cmd /c "git show HEAD:<path> > out"` puis éditer les lignes.)
+20. **ERA « System Error » sur `BleManager.initialize:115` = profil legacy BCP
+    refusé (2026-10-14, résolu le 2026-10-16)** : rapport Connect IQ ERA
+    « Edge® Explore 2 : 27.14 · App 0.0.7 · fre · 1 occurrence », backtrace
+    `initialize:115` ← `getShared:149` ← `onStart:701`. **Identifier la ligne
+    par le numéro dans l'historique** : ce trio de lignes ne correspond qu'au
+    build courant (`ca606fc`) — `ca606fc` a `getShared` en `EbikeField:701` et
+    `registerProfile` en `BleManager:115` ; les versions antérieures
+    (`116`/`712`, `116`/`768`) ne matchent pas. Donc PAS une vieille version :
+    c'est bien le code actuel. `initialize:115` = enregistrement du **profil
+    legacy** `5e8597aa`, dans le `try` best-effort → exception **rattrapée**
+    (`_legacyProfileOk = false`), pas un crash ; la décision à prendre était
+    « bruit ERA cosmétique » ou « supprimer le profil ». Choix : **supprimé**
+    (ce qui rend l'entrée ERA caduque, −2995 octets). Deux enseignements :
+    (a) **un `catch` n'empêche pas Garmin de remonté l'erreur dans ERA** quand
+    elle vient du BLE — un rapport ERA n'est pas la preuve d'un crash vu par
+    l'utilisateur ; (b) pour dater un rapport ERA, comparer les numéros de
+    ligne du backtrace avec `git show <commit>:<fichier>` (commande de la
+    section ci-dessus). Vérification terrain **requise** : la suppression du
+    heartbeat n'est pas simulable (pas de BLE dans le simulateur).
 
 ---
 
 ## 7. Historique (déjà fait, pour contexte)
 
 - **Pile BCP/CAP/PDO archivée** : `Bcp.mc`/`Cap.mc`/`Pdo.mc` déplacés dans
-  `archive/`, références retirées de `BleManager.mc`. Seul le heartbeat TX BCP
-  reste vivant.
-- **Contrôle du niveau d'assistance** : archivé/désactivé (`archive/Assist.mc`).
+  `archive/` (puis `.mc.bak`), références retirées de `BleManager.mc`. Seul le
+  heartbeat TX BCP restait vivant — **supprimé lui aussi le 2026-10-16**.
+- **Contrôle du niveau d'assistance** : archivé/désactivé (`archive/Assist.mc.bak`).
 - **Localisation** : eng + fre/deu/ita (labels, états, menu, titres).
 - **2026-09-21** : vitesse → puissance moteur (RX2) ; mode d'assistance (RX7)
   décodé/affiché ; fonts de valeur agrandies ; RX2/RX5/RX7 validés terrain ;
@@ -619,3 +650,22 @@ voir piège #18.
   (`approachs7243mm`, `approachs7247mm`, `enduro4`) lors de la tentative — à
   valider avec l'utilisateur avant commit (le `enduro4` ajoute une cible à
   contrôler).
+
+- **2026-10-16 — profil GATT legacy BCP supprimé** : sur ERA, un rapport
+  « System Error » (Edge Explore 2 fw 27.14, 1 occurrence, 2026-10-14,
+  `BleManager.initialize:115` ← `getShared:149` ← `EbikeField.onStart:701`) —
+  le profil legacy `5e8597aa` (heartbeat TX + assist SDO, déjà sans appelant
+  vivant) était **la seule** raison d'un 2ᵉ `registerProfile`. Ce profil est
+  retiré ; l'app n'enregistre plus que Sigma/FD6D. Suppressions en chaîne :
+  `_legacyProfileOk`, `_txChar`, `_bootPending`, `_lastHeartbeat`, `HB_*`,
+  `TX/RX_UUID`, `_sendHeartbeat`, `_queueCharacteristicWriteCharSafe`,
+  `setAssistLevel` + `_sendPersist` + `_buildAssistFrame` (assist mort),
+  `onTick()` (vide), `_syncAssist`/`_lastAssistSent`/`assistLevel()` côté champ,
+  et la branche `:char` de la file d'écriture (seul `:desc` reste). L'UUID
+  `SERVICE_UUID` **conserve** son rôle de filtre de scan/appairage.
+  Effet : plus de rapports ERA de ce type, **−2995 octets** sur `enduro`
+  (26668 → **23673 / 32768**, marge 9095). Contrôles : `monkeyc -l 2` OK
+  `venusq2` + `epix2pro42mm` + `epix2pro51mm`, run démo log 0 octet.
+  ⚠️ **À VALIDER SUR LE VÉLO avant push** : plus aucun heartbeat n'est envoyé
+  (la montre n'a plus de TX). Si la liaison BLE tient > 15 min sans heartbeat,
+  c'est bon → `git push`. Si elle lâche, revert du commit correspondant.

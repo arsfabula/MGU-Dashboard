@@ -4,9 +4,10 @@
 > `0000fd6d-…` (lib `com.sitael.SERIAL_SIGMA_EBIKE_Lib`), décodé par
 > `source/Sigma.mc`. Les trames arrivent sur les caractéristiques
 > `00000001..08` (« RX1..RX8 », voir §Sigma). La pile **BCP/CAP/PDO**
-> (`5e8597aa-…`, `archive/Bcp.mc`, `Cap.mc`, `Pdo.mc`) n'est plus compilée pour
-> la réception : c'est un chapitre d'archive (§ archive) — il ne reste **vivant**
-> que le heartbeat TX en trame BCP single-frame sur `5e8597ac`.
+> (`5e8597aa-…`, `archive/Bcp.mc.bak`, `Cap.mc.bak`, `Pdo.mc.bak`) est un
+> chapitre d'archive (§ archive) : elle **n'est plus enregistrée du tout**
+> (2026-10-16, voir §S.1) — plus aucun heartbeat TX, plus aucune écriture
+> d'assistance. Seuls le décodage Sigma et le filtre de scan subsistent.
 
 Document de référence pour l'implémentation Garmin Connect IQ (data field) de la
 réception des données d'un moteur Flyon (Pinion MGU) via Bluetooth Low Energy.
@@ -68,6 +69,20 @@ sonde la présence de chaque `0000000N` après connexion (`_enableFd6dNotificati
 > appareil refusant la 2ᵉ définition perdait le profil principal — observé sur
 > un Edge Explore 2 fw 31.33 (ERA « System Error », 2026-09-25). Les 8
 > caractéristiques RX1..RX8 sont conservées.
+>
+> **2026-10-16 — il n'y a plus qu'UN profil.** Le profil legacy `5e8597aa` a été
+> **retiré du build** : il ne servait qu'au heartbeat TX (et à des écritures
+> d'assistance déjà désactivées), et les montres dont la table de profils refuse
+> une 2ᵉ définition continuaient de déposer un rapport ERA « System Error » à
+> chaque démarrage — dernier cas : **Edge Explore 2 fw 27.14, 2026-10-14**,
+> `BleManager.initialize:115` ← `getShared:149` ← `EbikeField.onStart:701`.
+> `initialize()` enregistre donc un seul profil, directement dans le `try` de
+> `getShared()` : plus de branche « best effort », plus de `_legacyProfileOk`.
+> Conséquences assumées : **aucun heartbeat** (lawir n'a jamais rien déclenché
+> côté vélo, cf. § terrain ci-dessus), **aucune écriture d'assistance** (le
+> `_syncAssist` était déjà mort), `archive/` conserve les trames BCP pour
+> référence. Gain : **−2995 octets** (`enduro` 26668 → 23673). À valider sur le
+> vélo (le lien tient-il sans heartbeat ?), car le simulateur n'a pas de BLE.
 
 ### S.2 Correspondance RX1..RX8 ↔ messages Sigma
 
@@ -230,12 +245,13 @@ décodé pour la puissance cycliste, la cadence, le couple et la distance.
 
 > **Statut d'archivage (2026) :** la réception BCP/CAP/PDO via `5e8597aa-…`
 > n'est **plus** observée sur le vélo réel (CCCD RX refusé `st=18`) ; les
-> décodeurs `Bcp.mc`, `Cap.mc`, `Pdo.mc` sont conservés dans `archive/` (hors
-> compilation). **Ce qui reste vivant :** le **heartbeat TX**, trame BCP
-> single-frame écrite sur `5e8597ac` (BootUp à la connexion, Operational toutes
-> les 1800 ms, Stopped à la déconnexion) — `BleManager._sendHeartbeat`. Le
-> **changement de niveau d'assistance** (SDO_WRITE) est archivé/désactivé
-> (voir `archive/Assist.mc`). Le §6 PDO ci-dessous est le protocole
+> décodeurs `Bcp.mc.bak`, `Cap.mc.bak`, `Pdo.mc.bak` sont conservés dans
+> `archive/` (hors compilation). **Plus rien de tout cela n'est enregistré
+> (2026-10-16) :** le profil legacy a été retiré du build (§S.1), donc ni
+> **heartbeat TX** (BootUp/Operational/Stopped — l'ancien
+> `BleManager._sendHeartbeat`), ni **écriture du niveau d'assistance**
+> (SDO_WRITE, `archive/Assist.mc.bak`). Seule subsiste l'UUID `5e8597aa` comme
+> filtre de scan/appairage. Le §6 PDO ci-dessous est le protocole
 > **FIT e-Bike CAN** de Biketec — **sans rapport avec Sigma** (§ Sigma).
 
 ### A.1 GATT legacy
@@ -248,13 +264,11 @@ décodé pour la puissance cycliste, la cadence, le couple et la distance.
 
 Le vélo annonce `0xFD6D` et `5e8597aa-…` (128-bit incomplet) ; la pile BLE du
 firmware Garmin ne remonte que le 16-bit au scan. Connect IQ n'a pas de
-découverte GATT : on enregistre **deux profils** — AD (FD6D, voir §S.1) et
-données (5e8597aa + RX/TX). En pratique les données ne remontent **que** sur
-FD6D (CCCD `5e8597ab` refusé, `st=18`).
-
-> Ce profil de données est enregistré en **best effort** (voir §S.1) : s'il est
-> refusé par l'appareil, `_legacyProfileOk = false`, les heartbeats TX ne sont
-> plus envoyés et le champ Sigma/FD6D continue de fonctionner normalement.
+découverte GATT : historiquement on enregistrait **deux profils** — AD (FD6D,
+voir §S.1) et données (5e8597aa + RX/TX). En pratique les données ne remontent
+**que** sur FD6D (CCCD `5e8597ab` refusé, `st=18`), et le 2ᵉ profil est
+aujourd'hui retiré (§S.1) : un seul profil est enregistré, `5e8597aa` ne sert
+plus que de filtre au scan.
 
 ### A.2 Framing BCP (20 octets / trame)
 
@@ -300,7 +314,7 @@ app : `[0x09, 0x02, type, ...]`. Le contenu utile est un paquet **CAP** :
 | 8 | HEARTBEAT |
 | 10 | INVALID |
 
-### A.5 Heartbeat (toujours utilisé, TX)
+### A.5 Heartbeat (archive — plus émis depuis le 2026-10-16)
 
 `CAPPacket(HEARTBEAT, [status, info])` → payload `[8, status, info]`.
 
@@ -311,10 +325,12 @@ app : `[0x09, 0x02, type, ...]`. Le contenu utile est un paquet **CAP** :
 | Operational | 5 |
 | PreOperational | 127 |
 
-Séquence (toujours active dans `BleManager`) : `BootUp` `[09 02 08 00 00]` dès
+Séquence historique (`BleManager.onTick()`) : `BootUp` `[09 02 08 00 00]` dès
 la connexion GATT, puis `Operational` `[09 02 08 05 00]` toutes les **1800 ms**,
 et `Stopped` `[09 02 08 04 00]` à l'arrêt. Trame wire single-frame complète :
-`[0xC5, session, 0x09, 0x02, 8, status, info, zéros…]`.
+`[0xC5, session, 0x09, 0x02, 8, status, info, zéros…]`. **Plus aucun de ces
+envois n'existe dans le build** (le profil legacy n'est pas enregistré) ; la
+définition est conservée ici pour archive.
 
 ### A.6 PDO (`CAPType.PDO = 7`) — archive
 
@@ -358,7 +374,7 @@ PDO11 — 0x3A1 : totalActiveEmergencies u8.
 
 Les sentinelles (`0xFFFF`, `255`, `127`, `-1`…) dénotent l'absence de valeur —
 voir le détail complet dans l'historique git de `docs/PROTOCOL.md` et
-`archive/Pdo.mc`.
+`archive/Pdo.mc.bak`.
 
 ### A.7 Écriture CAN par SDO_WRITE — arch. (ancien changement de niveau)
 
@@ -398,7 +414,7 @@ octets `73 61 76 65` (« save »), vers le node propriétaire (1 REMOTE /
 `saveToPersistRemoteMemory`, 2 DRIVE_UNIT / `saveToPersistMotorMemory`, 3
 DISPLAY). Trame de 20 octets, message CAP de 15 octets, `0xCF = PayloadSize 15`.
 Sans lui, le changement restait en RAM et se perdait. Implémentation + layout :
-`archive/Assist.mc`.
+`archive/Assist.mc.bak`.
 
 ---
 
@@ -410,21 +426,13 @@ Sans lui, le changement restait en RAM et se perdait. Implémentation + layout :
    `null` (profils non enregistrables, 3 tentatives épuisées) les étapes
    2..7 n'ont pas lieu et le champ affiche « BLE indisponible ».
 2. `pairDevice(scanResult)` → appairage confirmé par l'utilisateur.
-3. Connexion : récupérer les services FD6D (profil AD) et `5e8597aa` (profil
-   données, TX `5e8597ac` heartbeats).
-4. Souscrire les CCCD des caractéristiques FD6D `00000001..08` (`[0x01, 0x00]`).
-   Le CCCD BCP `5e8597ab` est aussi tenté mais refusé (`st=18`) sur le vélo.
-5. Envoyer le heartbeat BCP `BootUp` `[0x09, 0x02, 8, 0, 0]` sur TX `5e8597ac`.
-6. Heartbeat `Operational` `[0x09, 0x02, 8, 5, 0]` auto-gated à 1800 ms, envoyé
-   **à chaque trame RX reçue** (`onCharacteristicChanged` → `onTick()`) — pas
-   d'horloge propre : `Toybox.Timer` n'est **pas disponible** dans un data field
-   (`Permission Required: not available to 'Data Field'`), et `onUpdate` ne
-   tourne que quand la page du champ est affichée. Tout le travail périodique
-   (heartbeat + enregistrement FIT) est donc porté par le flux RX entrant, qui
-   continue même champ caché.
-7. Les notifications Sigma arrivent sur FD6D : RX1 (RIDE) + RX3 (BATTERY)
-   décodées, RX2/RX4..RX8 loguées en hex. À la déconnexion : heartbeat
-   `Stopped` `[0x09, 0x02, 8, 4, 0]`.
+3. Connexion : récupérer le service FD6D (profil AD enregistré).
+4. Souscrire les CCCD des caractéristiques FD6D `00000001..08` (`[0x01, 0x00]`),
+   via la file d'écriture sérialisée `_queueDescriptorWrite`.
+5. Les notifications Sigma arrivent sur FD6D : RX1 (RIDE), RX2 (MOTOR),
+   RX3 (BATTERY) et RX7 (ASSIST) décodées (`Sigma.parseRide/parseMotor/
+   parseBattery/parseAssist`), RX4..RX6/RX8 ignorées (plus de log).
+   **Aucun heartbeat n'est envoyé** (profil legacy retiré, 2026-10-16).
 
 ---
 
@@ -465,9 +473,12 @@ Moyennes session/tour calculées en interne (`_powerSum`/`_cadenceSum` sur
 
 `onUpdate` n'est appelé que quand la page du data field est affichée. Pour que
 l'enregistrement continue quand une autre page de données est visible,
-`BleManager.onCharacteristicChanged` appelle à chaque trame RX reçue :
-`onTick()` (heartbeat, auto-gated 1800 ms) puis `fit.update(_model)` (via
-`setFitContributor`). Conséquences :
+`BleManager.onCharacteristicChanged` appelle à chaque trame RX reçue
+`fit.update(_model)` (via `setFitContributor`) — le flux RX entrant est donc la
+seule source périodique du travail « hors écran ». Il n'y a plus d'`onTick()`
+(il ne portait que les heartbeats). Pas d'horloge propre : `Toybox.Timer` n'est
+**pas disponible** dans un data field (`Permission Required: not available to
+'Data Field'`).
 
 - **Enregistrement FIT ininterrompu** tant que le vélo envoie des trames, champ
   caché ou non (les callbacks BLE, eux, continuent de tourner).
