@@ -672,8 +672,15 @@ voir piège #18.
   ✅ **Validé sur le vélo le 2026-10-16** : plus aucun heartbeat n'est envoyé
   (la montre n'a plus de TX) et **la liaison tient** — sortie de 10–15 min sans
   coupure, jauge et bandes qui continuent de se mettre à jour. Aucun nouveau
-  rapport ERA. **Publié en 0.0.8 sur le Connect IQ Store** (le store porte la
-  version : le `manifest.xml` n'a pas d'attribut `versionNumber`, d'où
-  « App Versions: 0.0.7 » dans ERA pour le build précédent — ajouter
-  `versionNumber` au manifest rendrait l'attribution des rapports ERA
-  explicite, à faire au prochain release).
+  rapport ERA. **Publié en 0.0.8 sur le Connect IQ Store.**
+  Preuve de bout en bout (activity Garmin Connect, epix Pro 51 mm, fw 27.18,
+  1 h 04:52, 16,82 km) : les **6 canaux du data field** remontent bien dans
+  Garmin Connect — Puissance cycliste **49 W moy.**, Cadence **37 rpm moy.**,
+  Assistance (paliers), Batterie **66 % mini**, Autonomie, Puissance moteur —
+  tous marqués « IQ », plus le résumé `Connect IQ` et le FIT signé « Original ».
+  Cela valide d'un coup le Sigma/FD6D, le FIT contributor **et** la tenue de la
+  liaison BLE sans heartbeat. `manifest.xml` : ajout de `version="0.0.8"`
+  (attribut `version`, et non `versionNumber`/`versionName` — rejetés par le
+  schéma manifest v3) pour que l'ERA rattache chaque rapport à un build ; la
+  version reste saisie à l'upload dans le store, il faut donc **incrementer
+  l'attribut à chaque publication**.
