@@ -78,11 +78,13 @@ sonde la présence de chaque `0000000N` après connexion (`_enableFd6dNotificati
 > `BleManager.initialize:115` ← `getShared:149` ← `EbikeField.onStart:701`.
 > `initialize()` enregistre donc un seul profil, directement dans le `try` de
 > `getShared()` : plus de branche « best effort », plus de `_legacyProfileOk`.
-> Conséquences assumées : **aucun heartbeat** (lawir n'a jamais rien déclenché
-> côté vélo, cf. § terrain ci-dessus), **aucune écriture d'assistance** (le
-> `_syncAssist` était déjà mort), `archive/` conserve les trames BCP pour
-> référence. Gain : **−2995 octets** (`enduro` 26668 → 23673). À valider sur le
-> vélo (le lien tient-il sans heartbeat ?), car le simulateur n'a pas de BLE.
+> Conséquences assumées : **aucun heartbeat** (le TX n'a jamais rien
+> déclenché côté vélo, cf. § terrain ci-dessus), **aucune écriture d'assistance**
+> (le `_syncAssist` était déjà mort), `archive/` conserve les trames BCP pour
+> référence. Gain : **−2995 octets** (`enduro` 26668 → 23673).
+> **Validé sur le terrain le 2026-10-16** : la liaison tient sans heartbeat
+> (sortie 10–15 min sans coupure), publié en 0.0.8, aucun rapport ERA. Le
+> simulateur n'ayant pas de BLE, seule une sortie réelle pouvait trancher.
 
 ### S.2 Correspondance RX1..RX8 ↔ messages Sigma
 

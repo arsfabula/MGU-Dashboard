@@ -19,8 +19,9 @@
 > **2026-10-16** : **profil GATT legacy BCP supprimé** (heartbeat TX + assist,
 > déjà sans vivant appelant) — un `registerProfile` de trop faisait remonter une
 > erreur ERA « System Error » sur les montres qui refusent une 2ᵉ définition
-> (piège #20). `enduro` : 26668 → **23673 B / 32768**. ⚠️ **en attente de
-> validation terrain avant push** (le lien BLE tient-il sans heartbeat ?).
+> (piège #20). `enduro` : 26668 → **23673 B / 32768**. ✅ **validé sur le
+> vélo le 2026-10-16** : sortie de 10–15 min sans coupure de la liaison, **aucun
+> rapport ERA** ; version publiée **0.0.8**.
 >
 > Objectif de cette passation : permettre à une session neuve de continuer
 > **sans dépendre de la mémoire de la session précédente**. Lire ce doc en
@@ -310,9 +311,11 @@ voir piège #18.
 6. ~~**Erreur typecheck stricte (`-l 2`)**~~ : **fait** — `_assistItem` nullable
    (2026-09-29), + cette session la jauge/FTP compilent en `-l 2` sur
    `venusq2` et `epix2pro42mm`.
-7. **Heartbeat / Stability du lien** : supprimés le 2026-10-16 (profil legacy
-   retiré). À valider sur le vélo : la liaison tient-elle > 15 min sans
-   heartbeat ? (le simulateur n'a pas de BLE — impossible de le tester là).
+7. ~~**Heartbeat / stabilité du lien**~~ : **fait et validé (2026-10-16)** —
+   heartbeats supprimés (profil legacy retiré) ; le lien BLE **tient** sans,
+   confirmé sur le vélo (sortie 10–15 min sans coupure) puis en version
+   publiée 0.0.8 sans nouveau rapport ERA. Le simulateur, lui, n'a pas de BLE :
+   ce point ne pouvait être validé que sur le terrain.
 8. **FTP « Auto » sur appareils non supportés** : `getFunctionalThresholdPower`
    n'est documenté que sur fenix 8, Venu 4/X1, FR 570/970, Edge 8xx/5xx, Enduro 3,
    vivoactive 6, D2 Mach 2 Pro — pas `venusq2` ni `epix2pro*`. Le repli 200 W
@@ -666,6 +669,11 @@ voir piège #18.
   Effet : plus de rapports ERA de ce type, **−2995 octets** sur `enduro`
   (26668 → **23673 / 32768**, marge 9095). Contrôles : `monkeyc -l 2` OK
   `venusq2` + `epix2pro42mm` + `epix2pro51mm`, run démo log 0 octet.
-  ⚠️ **À VALIDER SUR LE VÉLO avant push** : plus aucun heartbeat n'est envoyé
-  (la montre n'a plus de TX). Si la liaison BLE tient > 15 min sans heartbeat,
-  c'est bon → `git push`. Si elle lâche, revert du commit correspondant.
+  ✅ **Validé sur le vélo le 2026-10-16** : plus aucun heartbeat n'est envoyé
+  (la montre n'a plus de TX) et **la liaison tient** — sortie de 10–15 min sans
+  coupure, jauge et bandes qui continuent de se mettre à jour. Aucun nouveau
+  rapport ERA. **Publié en 0.0.8 sur le Connect IQ Store** (le store porte la
+  version : le `manifest.xml` n'a pas d'attribut `versionNumber`, d'où
+  « App Versions: 0.0.7 » dans ERA pour le build précédent — ajouter
+  `versionNumber` au manifest rendrait l'attribution des rapports ERA
+  explicite, à faire au prochain release).
