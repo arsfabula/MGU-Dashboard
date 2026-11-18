@@ -1,6 +1,7 @@
 # PASSATION — reprendre ce projet dans une NOUVELLE session opencode
 
-> **STATUT 2026-10-08.** Le data field Sigma/FD6D est **fonctionnel et validé
+> **STATUT 2026-11-18** (dernière validation terrain : 2026-10-16). Le data
+> field Sigma/FD6D est **fonctionnel et validé
 > terrain**. Depuis la session précédente : la **puissance cycliste est passée en
 > jauge radiale** (arc concentrique épousant le **contour supérieur** de l'écran,
 > échelle 0→2×FTP, zones de couleur, aiguille, valeur centrée sous la calotte), avec
@@ -22,6 +23,16 @@
 > (piège #20). `enduro` : 26668 → **23673 B / 32768**. ✅ **validé sur le
 > vélo le 2026-10-16** : sortie de 10–15 min sans coupure de la liaison, **aucun
 > rapport ERA** ; version publiée **0.0.8**.
+> **2026-11-18** : **`edge1060` et `marq3` ajoutés** au `manifest.xml` (**139
+> produits**) et **outillage de référence = SDK 9.3.0** : lui seul déclare
+> officiellement `marq3` et affiche les budgets réels des deux appareils (17283 B
+> sur 786432 pour `marq3`, sur 1048572 pour `edge1060` → marges énormes, rien à
+> optimiser). `monkeyc -l 2` `BUILD SUCCESSFUL` **sans aucun avertissement** sur
+> `edge1060`, `marq3`, `venusq2`, `epix2pro42mm`, `epix2pro51mm`. Aucun `source/`
+> modifié. ⚠️ Référence de taille changée : `enduro` = **23865 B / 32768** mesuré
+> avec 9.3.0 (les 23673 B de la ligne précédente étaient mesurés avec 9.2.0 : ne
+> comparer qu'à outillage égal, piège #22). Version portée à **0.0.9** dans le
+> manifeste — la publication reste votre upload sur le store.
 >
 > Objectif de cette passation : permettre à une session neuve de continuer
 > **sans dépendre de la mémoire de la session précédente**. Lire ce doc en
@@ -38,25 +49,43 @@
 - **Langues** : `eng` (primaire), `fre`, `deu`, `ita` (déclarées dans
   `manifest.xml` ; dossiers `resources/`, `resources-fre/`, `resources-deu/`,
   `resources-ita/`).
-- **Cibles** (`manifest.xml`) : `edgeexplore`, `epix2`, `epix2pro42mm`,
-  `epix2pro47mm`, `epix2pro51mm`, `instinctcrossoveramoled`, `venusq2`.
+- **Cibles** (`manifest.xml`) : **139 produits** (montres, `edge*`, `fenix*`,
+  `fr*`, `epix*`, `descent*`, `instinct*`, `marq*`, `venu*`, GPSmap…). La liste
+  exhaustive est dans `manifest.xml` — ne pas la re-transcrire ici, elle dérive.
+  Cibles de travail / mesure mémoire : `enduro` (gate 32768 B), `venusq2`,
+  `epix2pro42mm`, `epix2pro51mm`. Ajout 2026-11-18 : `edge1060`, `marq3`.
+
 - **Permissions** : `BluetoothLowEnergy`, `FitContributor`, `UserProfile`
   (`UserProfile` exigé par le typecheck dès qu'on touche à `Toybox.UserProfile`).
 - **Clé de signature** : `developer_key.der` (racine).
 - **Jungle** : `monkey.jungle` = `project.manifest = manifest.xml` (rien d'autre).
+- **Version de l'app** : attribut `version="x.y.z"` de `<iq:application>` dans
+  `manifest.xml` — **à incrémenter à chaque publication** (l'attribut s'appelle
+  `version`, pas `versionNumber`/`versionName` : le schéma `manifest_v3.xsd`
+  rejette les autres, erreur `cvc-complex-type.3.2.2`).
+
+### Outillage (SDK) — **9.3.0 depuis le 2026-11-18**
+
+Référence : `C:\Users\greg\AppData\Roaming\Garmin\ConnectIQ\Sdks\connectiq-sdk-win-9.3.0-2026-10-20-95888f262\bin\monkeyc.bat`.
+Un changement d'outillage déplace les tailles mesurées (+192 B sur `enduro`
+entre 9.2.0 et 9.3.0) → ne comparer des tailles qu'**à SDK égal** (piège #22).
+Le 9.3.0 est nécessaire pour `marq3` (et pour le budget réel de `edge1060`).
 
 ### Build (vérifié)
 
 ```powershell
-& "C:\Users\greg\AppData\Roaming\Garmin\ConnectIQ\Sdks\connectiq-sdk-win-9.2.0-2026-06-09-92a1605b2\bin\monkeyc.bat" `
+& "C:\Users\greg\AppData\Roaming\Garmin\ConnectIQ\Sdks\connectiq-sdk-win-9.3.0-2026-10-20-95888f262\bin\monkeyc.bat" `
   -f monkey.jungle -o "C:\Users\greg\AppData\Local\Temp\opencode\ebike-test.prg" `
   -y developer_key.der -d venusq2 -l 0
 ```
 
 - `-l 0` et `-l 2` : `BUILD SUCCESSFUL` sur `venusq2` et `epix2pro42mm`
-  (vérifié le 2026-09-29 après ajout jauge + FTP).
-- Les cibles `epix2pro*` produisent des `.iq` dans `bin/` ; le `.prg` de
-  sideload est `bin\ebikedf.prg`.
+  (vérifié le 2026-09-29 après ajout jauge + FTP) ; revérifié le 2026-11-18 avec
+  le SDK 9.3.0 sur `venusq2`, `epix2pro42mm`, `epix2pro51mm`, `edge1060`,
+  `marq3` — **aucun avertissement** (aucun code déprécié signalé).
+- Les `.prg`/`.iq` sont des artefacts **jetables** (simulateur, sideload) : ils
+  vont dans `%TEMP%\opencode\` ou `bin/`, sont ignorés par git (`.gitignore`)
+  et **ne doivent pas être commités** ni servir de référence.
 
 ---
 
@@ -475,6 +504,29 @@ voir piège #18.
     ligne du backtrace avec `git show <commit>:<fichier>` (commande de la
     section ci-dessus). Vérification terrain **requise** : la suppression du
     heartbeat n'est pas simulable (pas de BLE dans le simulateur).
+21. **« `Target device id 'x' is not enabled in the application manifest file` »
+    ne veut PAS dire « id inconnu » (2026-11-18)** : ce message dit que
+    l'outillage **connaît** l'id et que `<iq:products>` ne le déclare pas encore
+    → ne pas chercher un SDK plus récent. Un id que l'outillage ne connaît pas
+    donne `ERROR: Invalid device id specified: '…'`. Test discriminant sans
+    toucher au dépôt : copier le projet (`monkey.jungle`, `manifest.xml`,
+    `developer_key.der`, `source`, `resources*`) dans un dossier de `%TEMP%`, y
+    ajouter le produit, builder `-d <id>`, puis tester un id bidon pour
+    comparer les deux messages. Concrètement `edge1060` **et** `marq3`
+    comaient déjà avec le SDK 9.2.0 **et** avec le 9.3.0 ; seul le 9.3.0 a
+    `marq3` dans `com/garmin/monkeybrains/devices/devices.xml`
+    (`bin/monkeybrains.jar`) et affiche les budgets réels (`786432` /
+    `1048576` octets). Ce `devices.xml` n'est **pas** l'unique source d'ids
+    acceptés par `monkeyc` : ne jamais conclure à sa seule lecture.
+22. **La taille mesurée dépend de l'outillage (2026-11-18)** : code identique,
+    manifeste identique, `enduro` = **23673 B** mesuré par le SDK **9.2.0** et
+    **23865 B** par le **9.3.0** (+192 B). Ne comparer que des mesures **du même
+    SDK**, et se rappeler que le chiffre qui compte est celui du **rapport de
+    l'export de publication** (il avait mesuré 32811 B là où 9.2.0 mesurait
+    38170 B pour la même source). Référence courante : **23865 B / 32768**
+    (marge 8903 B) avec le 9.3.0. Attention à `--build-stats 1` : la ligne
+    « x % of 131072 available » décrit la mémoire **totale de l'appareil**, pas
+    le plafond d'un data field → comparer à **32768** pour `enduro`.
 
 ---
 
@@ -684,3 +736,29 @@ voir piège #18.
   schéma manifest v3) pour que l'ERA rattache chaque rapport à un build ; la
   version reste saisie à l'upload dans le store, il faut donc **incrementer
   l'attribut à chaque publication**.
+
+- **2026-11-18 — ajout de `edge1060` et `marq3` au manifeste, outillage SDK
+  9.3.0, version `0.0.9`** : extension du catalogue d'appareils (137 → **139
+  produits**), insérés en ordre de tri de chaînes (`edge1060` après `edge1050`,
+  `marq3` après `marq2aviator`). Recherche préalable : `marq3` n'apparaît dans
+  `devices.xml` (`bin/monkeybrains.jar`) que du SDK 9.3.0, `edge1060` d'aucun des
+  trois SDK installés → la conclusion « il faut un SDK plus récent » était
+  **fausse** (piège #21) : `monkeyc` acceptait déjà les deux ids en 9.2.0 comme
+  en 9.3.0, `devices.xml` n'étant pas la source unique d'identifiants. Le
+  **9.3.0 devient l'outillage de référence** (§1) : lui seul déclare
+  officiellement `marq3` et affiche les budgets réels des deux appareils.
+  Contrôles exécutés avec le 9.3.0 (sorties dans `%TEMP%\opencode\`, artefacts
+  jetables non commités) : `monkeyc -l 2` **`BUILD SUCCESSFUL` sans le moindre
+  avertissement** sur `edge1060`, `marq3`, `venusq2`, `epix2pro42mm`,
+  `epix2pro51mm` — aucun code déprécié signalé par le compilateur le plus
+  strict. Tailles des deux nouvelles cibles : `marq3` Code 13858 + Data 3425 =
+  **17283 B** sur 786432 (2,20 %) et `edge1060` **17283 B** sur 1048572 (1,65 %)
+  → aucune optimisation à prévoir pour ces cibles. Gate mémoire `enduro` :
+  **23865 B / 32768** (marge 8903) mesuré avec 9.3.0 — c'est la **nouvelle
+  référence** de comparaison, l'ancienne (23673 B) étant un mesurage 9.2.0, d'où
+  les +192 B (piège #22). Aucun `source/` modifié : le **code** du champ ne
+  change pas, mais le binaire publié est désormais produit par 9.3.0 — un essai
+  (sideload ou simulateur) sur une montre reste à votre main, la liaison BLE
+  n'étant de toute façon pas simulable. Reste à faire côté Garmin : upload avec
+  la version **0.0.9** saisie à l'upload, puis lecture du rapport d'acceptation
+  pour confirmer qu'il ne signale rien sur `edge1060`/`marq3`.
