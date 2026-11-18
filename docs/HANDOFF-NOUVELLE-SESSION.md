@@ -527,6 +527,24 @@ voir piège #18.
     (marge 8903 B) avec le 9.3.0. Attention à `--build-stats 1` : la ligne
     « x % of 131072 available » décrit la mémoire **totale de l'appareil**, pas
     le plafond d'un data field → comparer à **32768** pour `enduro`.
+23. **Le paquet de publication est un `.iq` multi-appareils, pas un `.prg`
+    (2026-11-18)** : ce qui s'upload sur le store est généré par « **Monkey C:
+    Export Project** » (VS Code) et s'écrit **`<nom-du-projet>.iq` à la racine**
+    (`ebike-df.iq` ici) — ignoré par git, donc jamais dans le dépôt. Équivalent
+    CLI : `monkeyc -f monkey.jungle -o app.iq -y developer_key.der -e`
+    (`-e`/`--package-app`). ⚠️ **`-e` emballe TOUS les produits du manifeste,
+    même avec `-d`** : `-d` ne choisit que l'appareil de test, ne cherchez donc
+    pas quel appareil un paquet contient en regardant ce flag. Le paquet est un
+    conteneur 7z (magic `37 7A BC AF 27 1C`, `Expand-Archive` échoue) : on le lit
+    avec `tar -tf app.iq` et `tar -xOf app.iq manifest.xml`. Le `manifest.xml`
+    embarqué est **régénéré** : il n'a plus d'ids d'appareils mais des
+    `partNumber`/`filename` par produit, d'où un décompte plus élevé que celui du
+    manifeste source (ici 139 ids → **226** numéros de pièce, car un id comme
+    `marq3` couvre 7 variantes). Pour retrouver l'id derrière un numéro :
+    manifeste réduit à UN seul produit dans une copie du projet + build `-e` →
+    `edge1060` = **`006-B4962-00`**, `marq3` = **`006-B5000-00`** (le second est
+    nommé « MARQ® (Gen 3) … » dans `devices.xml`, le premier n'y figure pas —
+    voir piège #21).
 
 ---
 
@@ -762,3 +780,17 @@ voir piège #18.
   n'étant de toute façon pas simulable. Reste à faire côté Garmin : upload avec
   la version **0.0.9** saisie à l'upload, puis lecture du rapport d'acceptation
   pour confirmer qu'il ne signale rien sur `edge1060`/`marq3`.
+- **2026-11-18 (suite) — paquet de publication généré, puis vérifié** : l'export
+  a été fait dans le dépôt (« Monkey C: Export Project ») → **`ebike-df.iq` à la
+  racine**, 18:49, **6 119 713 B** (le paquet 0.0.8 du 2026-10-16 faisait
+  5 977 310 B : +142 403 B pour les deux appareils). Inspection du paquet
+  (conteneur 7z, `tar -tf` + `tar -xOf … manifest.xml`, voir piège #23) :
+  manifeste embarqué **`version="0.0.9"`**, **226** entrées `<iq:product>` avec
+  `partNumber`/`filename` (fan-out des 139 ids en numéros de pièce), langues
+  `deu, eng, fre, ita` — conforme au dépôt. Présence des deux nouveaux appareils
+  confirmée : **`006-B5000-00`** (celui que `devices.xml` nomme « MARQ® (Gen 3)
+  Athlete / Adventurer / Aviator / Commander / Golfer / Diver / Carbon ») et
+  **`006-B4962-00`**, seul numéro de pièce que `devices.xml` du 9.3.0 ne connaît
+  pas. L'association id → numéro a été obtenue par test positif (copie du projet,
+  manifeste réduit à un seul produit, build `-e`) : `edge1060` → `006-B4962-00`,
+  `marq3` → `006-B5000-00`. L'upload sur le store reste le geste manuel suivant.
