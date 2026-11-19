@@ -42,7 +42,11 @@
 
 ## 1. Projet — infos de base
 
-- **Racine** : `C:\Users\greg\Documents\Default Project\ebike-df\`
+- **Racine** : `C:\Users\greg\git\ebike-df\` (déplacée le 2026-11-19 depuis
+  `C:\Users\greg\Documents\Default Project\ebike-df\` ; dépôt autonome, donc
+  **aucun lien git à réparer** après le déplacement - vérifié : `.git` est un
+  dossier, aucune entrée de config ni worktree ne contient de chemin absolu,
+  `git ls-remote` répond et `HEAD` == `origin/main`).
 - **Type** : app Connect IQ (Monkey C) — **data field** (`EbikeField`) + fit
   contributor (`EbikeFitContributor`), qui lit le vélo Sigma via BLE.
 - **Nom affiché** : `@Strings.AppName` = **« MGU Dashboard »**.
@@ -794,3 +798,16 @@ voir piège #18.
   pas. L'association id → numéro a été obtenue par test positif (copie du projet,
   manifeste réduit à un seul produit, build `-e`) : `edge1060` → `006-B4962-00`,
   `marq3` → `006-B5000-00`. L'upload sur le store reste le geste manuel suivant.
+- **2026-11-19 — dépôt déplacé `Documents\Default Project\ebike-df` →
+  `C:\Users\greg\git\ebike-df`** (demande utilisateur). Rien à réparer côté git :
+  le dépôt n'utilise ni worktree ni sous-module, `.git` est un dossier, et
+  `git config --local` ne contient que l'URL distante (https). Contrôles :
+  `git rev-parse --show-toplevel` = nouveau chemin, `git ls-remote --heads origin`
+  répond, `HEAD` == `origin/main` (`5b03aee`). Seule référence au chemin ancien
+  dans les fichiers **suivis** : la ligne « Racine » du §1, corrigée. Les autres
+  occurrences étaient dans des artefacts de build périmés (`.prg.debug.xml`
+  racine + `bin/`, datés de septembre-octobre) : **supprimés**, ce qui est sûr
+  puisqu'ils sont jetables et ignorés par git. **Conservé** : `ebike-df.iq`
+  (18:49) - le paquet de publication n'avait pas encore été uploadé. Rien non
+  plus du côté de `.vscode/launch.json` (aucun chemin absolu, il utilise
+  `${command:GetTargetDevice}`) ni dans la config opencode de l'utilisateur.
