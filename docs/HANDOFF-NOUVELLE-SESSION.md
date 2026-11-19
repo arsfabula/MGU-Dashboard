@@ -29,10 +29,15 @@
 > sur 786432 pour `marq3`, sur 1048572 pour `edge1060` → marges énormes, rien à
 > optimiser). `monkeyc -l 2` `BUILD SUCCESSFUL` **sans aucun avertissement** sur
 > `edge1060`, `marq3`, `venusq2`, `epix2pro42mm`, `epix2pro51mm`. Aucun `source/`
-> modifié. ⚠️ Référence de taille changée : `enduro` = **23865 B / 32768** mesuré
-> avec 9.3.0 (les 23673 B de la ligne précédente étaient mesurés avec 9.2.0 : ne
-> comparer qu'à outillage égal, piège #22). Version portée à **0.0.9** dans le
-> manifeste — la publication reste votre upload sur le store.
+> modifié. ⚠️ Référence de taille : `enduro` = **23667 B / 32768** avec le 9.3.0
+> **sur arbre propre** (23475 B avec le 9.2.0 dans les mêmes conditions) ; le
+> 23865 B relevé le 2026-11-18 incluait des intermédiaires de build périmés,
+> voir piège #22. Version portée à **0.0.9** dans le manifeste.
+> **2026-11-19** : dépôt déplacé sous **`C:\Users\greg\git\ebike-df\`** (rien à
+> réparer côté git, vérifié) ; artefacts de build périmés supprimés et **mesure
+> de taille corrigée** (#22) ; le paquet `ebike-df.iq` du 18/11 18:49 est prêt et
+> audité (`edge1060` → `006-B4962-00`, `marq3` → `006-B5000-00`) — **son upload
+> sur le store reste à faire**.
 >
 > Objectif de cette passation : permettre à une session neuve de continuer
 > **sans dépendre de la mémoire de la session précédente**. Lire ce doc en
@@ -72,7 +77,11 @@
 
 Référence : `C:\Users\greg\AppData\Roaming\Garmin\ConnectIQ\Sdks\connectiq-sdk-win-9.3.0-2026-10-20-95888f262\bin\monkeyc.bat`.
 Un changement d'outillage déplace les tailles mesurées (+192 B sur `enduro`
-entre 9.2.0 et 9.3.0) → ne comparer des tailles qu'**à SDK égal** (piège #22).
+entre 9.2.0 et 9.3.0) → ne comparer des tailles qu'**à SDK égal**. Mesurer
+aussi sur **arbre propre** : `gen/`, `mir/`, `internal-mir/`, `external-mir/`
+et `bin/` hérités d'un build précédent gonflent la mesure (+198 B observés) ;
+les supprimer avant de mesurer. Référence en cours : **23667 B / 32768** pour
+**`enduro`** avec le 9.3.0 sur arbre propre (piège #22).
 Le 9.3.0 est nécessaire pour `marq3` (et pour le budget réel de `edge1060`).
 
 ### Build (vérifié)
@@ -522,15 +531,26 @@ voir piège #18.
     (`bin/monkeybrains.jar`) et affiche les budgets réels (`786432` /
     `1048576` octets). Ce `devices.xml` n'est **pas** l'unique source d'ids
     acceptés par `monkeyc` : ne jamais conclure à sa seule lecture.
-22. **La taille mesurée dépend de l'outillage (2026-11-18)** : code identique,
-    manifeste identique, `enduro` = **23673 B** mesuré par le SDK **9.2.0** et
-    **23865 B** par le **9.3.0** (+192 B). Ne comparer que des mesures **du même
-    SDK**, et se rappeler que le chiffre qui compte est celui du **rapport de
-    l'export de publication** (il avait mesuré 32811 B là où 9.2.0 mesurait
-    38170 B pour la même source). Référence courante : **23865 B / 32768**
-    (marge 8903 B) avec le 9.3.0. Attention à `--build-stats 1` : la ligne
-    « x % of 131072 available » décrit la mémoire **totale de l'appareil**, pas
-    le plafond d'un data field → comparer à **32768** pour `enduro`.
+22. **La taille mesurée dépend de l'outillage ET de l'état du build (mesuré le
+    2026-11-18, corrigé le 2026-11-19)** : deux effets indépendants, observés sur
+    `enduro` avec un `source/` et un manifeste inchangés. **(a) L'SDK** : sur
+    arbre propre, **23475 B** avec le 9.2.0 (Data 5619 + Code 17856) contre
+    **23667 B** avec le 9.3.0 (Data 5811 + Code 17856) — le +192 B est
+    entièrement dans la section `Data`, le code est identique octet pour octet.
+    **(b) Les intermédiaires périmés** : avec `gen/`, `mir/`, `internal-mir/`,
+    `external-mir/` hérités de builds antérieurs, le 9.3.0 annonçait **23865 B**,
+    soit **+198 B** de gonflement faux. D'où la règle de mesure : **vider `gen/`,
+    `mir/`, `internal-mir/`, `external-mir/` et `bin/` avant de mesurer**,
+    toujours noter le SDK utilisé, et ne comparer que des mesures prises dans les
+    mêmes conditions. **Référence courante : 23667 B / 32768 (marge 9101 B) avec
+    le SDK 9.3.0 sur arbre propre.** Corollaire : le paquet exporté le 2026-11-18
+    à 18:49 sortait d'un arbre sale — si le rapport du store signalait un
+    dépassement mémoire, vider ces répertoires et **ré-exporter avant toute coupe
+    de code**. Garder en tête que le chiffre qui décide reste celui du **rapport
+    de l'export de publication** (il avait mesuré 32811 B là où 9.2.0 mesurait
+    38170 B pour la même source). Enfin, la ligne « x % of 131072 available » de
+    `--build-stats 1` décrit la mémoire **totale de l'appareil**, pas le plafond
+    d'un data field → comparer à **32768** pour `enduro`.
 23. **Le paquet de publication est un `.iq` multi-appareils, pas un `.prg`
     (2026-11-18)** : ce qui s'upload sur le store est généré par « **Monkey C:
     Export Project** » (VS Code) et s'écrit **`<nom-du-projet>.iq` à la racine**
@@ -776,9 +796,11 @@ voir piège #18.
   strict. Tailles des deux nouvelles cibles : `marq3` Code 13858 + Data 3425 =
   **17283 B** sur 786432 (2,20 %) et `edge1060` **17283 B** sur 1048572 (1,65 %)
   → aucune optimisation à prévoir pour ces cibles. Gate mémoire `enduro` :
-  **23865 B / 32768** (marge 8903) mesuré avec 9.3.0 — c'est la **nouvelle
-  référence** de comparaison, l'ancienne (23673 B) étant un mesurage 9.2.0, d'où
-  les +192 B (piège #22). Aucun `source/` modifié : le **code** du champ ne
+  **23865 B / 32768** (marge 8903) mesuré avec 9.3.0 — **chiffre invalidé
+  depuis** : l'arbre contenait des intermédiaires de build périmés. Référence
+  correcte, arbre propre : **23667 B** avec le 9.3.0, **23475 B** avec le 9.2.0
+  (voir l'entrée 2026-11-19 et le piège #22). Aucun `source/` modifié : le
+  **code** du champ ne
   change pas, mais le binaire publié est désormais produit par 9.3.0 — un essai
   (sideload ou simulateur) sur une montre reste à votre main, la liaison BLE
   n'étant de toute façon pas simulable. Reste à faire côté Garmin : upload avec
@@ -811,3 +833,14 @@ voir piège #18.
   (18:49) - le paquet de publication n'avait pas encore été uploadé. Rien non
   plus du côté de `.vscode/launch.json` (aucun chemin absolu, il utilise
   `${command:GetTargetDevice}`) ni dans la config opencode de l'utilisateur.
+- **2026-11-19 (suite) — mesure de taille corrigée, deux causes distinctes** :
+  après suppression des artefacts, `enduro` repasse de 23865 B à **23667 B** avec
+  le même SDK 9.3.0 et le même code. Nouvelle série, **arbre propre** (à refaire
+  ainsi pour toute comparaison) : SDK 9.2.0 → Data 5619 + Code 17856 =
+  **23475 B** ; SDK 9.3.0 → Data 5811 + Code 17856 = **23667 B**. Le « +192 B
+  d'outillage » noté le 18/11 est donc réel (intégralement dans `Data`, code
+  identique octet pour octet), mais les chiffres relevés ce jour-là étaient
+  gonflés de **+198 B** par des intermédiaires de build périmés (`gen/`, `mir/`)
+  : les lire comme des mesures « arbre sale ». Marges actuelles, recontrôlées
+  depuis le nouvel emplacement : `enduro` 23667 B / 32768 (marge 9101 B),
+  `marq3` 17283 B / 786432, tous `BUILD SUCCESSFUL` à `-l 2` sans avertissement.
