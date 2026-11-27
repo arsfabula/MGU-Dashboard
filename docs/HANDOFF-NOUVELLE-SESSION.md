@@ -569,6 +569,14 @@ voir piège #18.
     `edge1060` = **`006-B4962-00`**, `marq3` = **`006-B5000-00`** (le second est
     nommé « MARQ® (Gen 3) … » dans `devices.xml`, le premier n'y figure pas —
     voir piège #21).
+24. **`==` ne compare pas le contenu de deux chaînes (mesuré sur Edge Explore,
+    2026-11-26)** : `a == b` rend **false** même pour deux littéraux identiques,
+    `a.equals(b)` rend true. À la sonde `tx.df1`, ce défaut a fait obtenir un
+    canal maître 38 fois **sans émettre une trame** — l'état chaîne `"OPEN"`
+    n'était jamais reconnu. Règle : machine à états par **codes numériques**
+    (comme `ST_*` dans la sonde de banc), `.equals()` seulement quand un cas
+    l'exige, jamais `==` sur des `String`. Les sources d'`ebike-df` ont été
+    auditées ce même jour : aucune de ces utilisations n'y existe.
 
 ---
 

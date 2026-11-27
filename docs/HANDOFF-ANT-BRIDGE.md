@@ -7,8 +7,10 @@ source (fichier, offset, ligne, log). Il remplace le fil de discussion, pas le c
 Date des mesures : 2026‑11‑26. Matériel de validation : **epix Pro 51 mm** (pièce `006-B4314-00`,
 fw 28.08, id produit CIQ **`epix2pro51mm`**, produit FIT **4314**) et **Edge Explore**
 (`006-B3011-00`, fw 5.40, CIQ 6.0.4, id produit **`edgeexplore`**). SDK Connect IQ
-**`connectiq-sdk-lin-9.3.0-2026-10-20-95888f262`**. Prochain poste : **Windows, avec le
-simulateur qui fonctionne** (section 8).
+**`connectiq-sdk-win-9.3.0-2026-10-20-95888f262`** (Windows ; les chemins Linux de la section 8 sont
+historiques). **État au 2026‑11‑26 soir : toutes les questions de la section 5 sont fermées sur
+l'appareil par la sonde `tx.df1` (trois sorties sur l'Edge + trois `.FIT` relus). La suite est la
+section 6 : écrire le pont dans `ebike-df`.**
 
 **Décision de conception actée** : le projet émettra **deux profils ANT+** — *Bicycle Power*
 (device type 11) pour la puissance du cycliste et la cadence, *LEV* (device type 20) pour la
@@ -51,9 +53,9 @@ en 64 et 128 bits** :
 | réseau | `Ant.NETWORK_PRIVATE` (index 2) | log `v0.0.14-BPTXEDPR.TXT:7` (`net 2 PRIVATE`) |
 | clé 64 bits | `B9 A5 21 FB BD 72 C3 45` (clé ANT+) | `AntBp.NETWORK_KEY` |
 | clé 128 bits | `B9 A5 21 FB BD 72 C3 45` **+ 8 octets à zéro** | log `:7` (`key128 [185,…,69,0×8]`) |
-| `deviceNumber` (ANT-id) | **252** | log `:23` (`OPEN id 252`) |
+| `deviceNumber` (ANT-id) | **252** pour *Bicycle Power*, **253** pour LEV — numéros fixés du produit (décision D6, 2026‑11‑26) | log `:23` (`OPEN id 252`) ; sonde `tx.df1` |
 | `deviceType` | **11** (*Bicycle Power*) | `AntBp.DEVICE_TYPE` |
-| `transmissionType` | 0 — **écart à la norme, mesuré sans conséquence** : Table 5‑2 du profil demande à un maître `MSN = 0` **et `LSN = 5`**, donc **0x05**. Le banc a émis 0 et l'epix s'est appairé quand même (`ant_transmission_type` n'est d'ailleurs pas enregistré dans le `.FIT`). Une variante à 0x05 n'a pas été jouée | `AntBp.TRANSMISSION_TYPE = 0` (`AntBpTest.mc:44`) ; exigence : `docs/ant/bicycle-power-5.1.txt` Table 5‑2 |
+| `transmissionType` | **0x05** — Table 5‑2 du profil : un maître doit `MSN = 0` **et `LSN = 5`**. Joué tel quel sur l'appareil par la sonde `tx.df1` (2026‑11‑26) : l'epix s'appaire et enregistre. Le banc historique avait émis 0 sans conséquence visible, mais il n'y a plus de raison de déroger | exigence : `docs/ant/bicycle-power-5.1.txt` Table 5‑2 ; mesure : sonde `tx.df1`, relectures `CFG tt=5` |
 | `messagePeriod` | **8182** ticks (= 8182/32768 s ≈ 4 Hz) | `AntBp.MESSAGE_PERIOD` |
 | `radioFrequency` | **57** | `AntBp.RF_CHANNEL` |
 | trame | **8 octets** de charge utile | `AntBp.PAYLOAD_LENGTH` |
@@ -147,7 +149,7 @@ natifs **et** les colonnes moteur/assistance/batterie alimentées par le BLE.
 | Croire l'acquittement 0x46 | `k1` (acquitté) et non découvert d'un côté, `k0` (jamais envoyé) et appairé de l'autre : **ni nécessaire ni suffisant** |
 | Compter sur `Sensor.SensorDelegate` / une API d'injection | `grep setPower|setCadence` dans le SDK 9.3.0 = 0 occurrence ; `Sensor`/`AntPlus` en lecture seule ; `SensorLogging` = accéléro/gyro/magnéto. Aucun essai nécessaire |
 | Un *data field* qui serait périphérique / GATT server | non : c'est la contrainte initiale, elle tient |
-| Chercher pendant que l'émetteur est en second plan | un Garmin ferme tous les canaux d'une app qui n'enregistre pas d'activité ; **une seule app à la fois** par appareil ; l'émetteur doit rester au premier plan |
+| Chercher pendant que l'émetteur est en second plan | un Garmin ferme tous les canaux d'une app qui n'enregistre pas d'activité ; **une seule app à la fois** par appareil ; l'émetteur doit rester au premier plan. Nuance mesurée par `tx.df1` : pour un *data field*, la borne réelle est le passage « inactive » de l'app elle-même — un champ de données gardait ses deux canaux maîtres pendant toute l'activité qui l'hébergeait |
 | L'Edge comme récepteur de capteurs de puissance | limite commerciale de la gamme : l'Edge ne voit pas les profils *Power*. C'est pourquoi l'Edge était l'émetteur et la montre la juge |
 
 Deux points jamais élucidés, sans effet sur la suite : `tx.edgx` (v0.0.13) n'a jamais démarré
@@ -156,64 +158,92 @@ Deux points jamais élucidés, sans effet sur la suite : `tx.edgx` (v0.0.13) n'a
 
 ---
 
-## 5. Questions ouvertes pour la suite (la plus importante d'abord)
+## 5. Questions — fermées sur l'appareil par la sonde `tx.df1` (2026‑11‑26)
 
-1. **Sur quel appareil tourne le porteur ANT+ ?** Le banc a prouvé *Edge → montre*. Dans le
-   produit, c'est la **montre** qui tient le lien BLE avec le vélo, donc elle devrait être
-   l'émetteur ANT+ vers elle‑même. **Non testé.** Une montre peut-elle être maître ANT+ *pendant
-   qu'elle enregistre une activité* et s'appairer elle-même ? C'est la première question à
-   trancher, avant tout refactor. Le banc miroir était prévu pour ça et n'a pas été joué.
-   Deux sous-questions, séparées : (a) un appui `Application.AppBase` d'un *data field* peut-il
-   ouvrir un canal maître ; (b) un appareil peut-il découvrir son propre émission.
-2. **La voie « data field » compile** (mesuré aujourd'hui, pas joué) :
-   `t1-bikepower/probe-datafield-ant/` — manifest `type="datafield"`, entrée
-   `Application.AppBase`, permission `Ant`, et dans `onStart()` : `Ant.ChannelAssignment`,
-   `Ant.GenericChannel`, `Ant.DeviceConfig`, `setDeviceConfig`, `open`, `sendBroadcast`.
-   `BUILD SUCCESSFUL` pour `edgeexplore` avec le SDK 9.3.0. La doc n'interdit depuis une *data
-   field app* que `sendBurst()` et `setBurstListener()` (`Lang.SymbolNotAllowedException`,
-   `$SDK/doc/Toybox/Ant/GenericChannel.html`). **Reste à exécuter** : le simulateur Windows
-   répond à ça sans radio (section 8).
-3. **Que faire quand le BLE Sigma tombe** : continuer d'émettre des trames valides (0 W,
-   cadence 0, *update event count* qui continue) ou rendre l'antenne ? Non décidé.
-4. **Quel ANT-id publier** (252 est celui du banc ; un id figé dans le produit se heurte à un
-   autre émetteur à proximité), et la coexistence avec d'autres profils émis.
-5. **Le second profil, *LEV* (`deviceType 20 = 0x14`)** : décidé, pas encore conçu.  Ses
-   règles de canal ne sont **pas** celles de *Bicycle Power* (période **8192**, type de
-   transmission **0x05**), et il ne porte **ni cadence ni puissance absolue** — seulement un
-   ratio `% Assist`, la batterie, l'autonomie, la vitesse.  Tout le détail (pages 1/2/3/4,
-   coexistence des deux maîtres, pièges) est dans **`docs/ANT-PROFILES.md`** §3 et §4.  Les
-   colonnes `motor_power` (FIT 82) et `battery_soc` (81) étaient **absentes** du `.FIT` testé :
-   leur correspondance avec les pages LEV reste à vérifier, pas à supposer.
-6. `minSdkVersion` : le banc a tourné avec `minSdkVersion="1.2.0"` sur Edge (CIQ 6.0.4) et la
-   montre à 28.08 ; `ebike-df` est à 3.1.0. À vérifier pour la variante qui émet.
+La sonde `tx.df1` (`ebike-sandbox/t1-bikepower/probe-datafield-ant/`, app `type="datafield"`,
+v0.0.1→v0.0.5, **trois sorties sur l'Edge Explore**, trois `.FIT` de l'epix relus) a fermé ce qui
+suit. Détail chronologique : README du banc ; règles consolidées : section 6 ci-dessous.
+
+1. **Un *data field* obtient-il un canal maître, et le garde-t-il pendant un enregistrement ?**
+   **Oui, mesuré, deux à la fois.** Sur l'Edge Explore, l'app de champ de données a obtenu
+   252/type 11 **et** 253/type 20 en un seul essai chacun (`a=1`, `f=0` sur toute la sortie) et les
+   a gardés `OPEN` de bout en bout des trois sorties, dont 8 min 17 s d'enregistrement actif sur
+   l'Edge (`REC START`/`REC STOP` horodatés avec les deux canaux `OPEN`). La règle *Multitasking* de
+   la doc ne s'applique qu'au passage « inactive » de l'app elle-même, pas à l'activité qui l'héberge.
+   La sous-question « la montre émettrice se découvrirait-elle elle-même » ne se pose plus : décision
+   D1, l'émetteur est l'Edge qui tient le BLE, le récepteur est l'epix en appairage natif sans champ
+   de données — cas exactement rejoué par les sorties.
+2. **La voie « data field » compile et s'exécute** : non seulement compilée, mais exécutée sur
+   l'appareil, émission réelle (`n` croît d'une trame par tick pendant que l'écran est actif) et
+   enregistrement complet côté récepteur : `device_info` **nommé** (`serial_number=252`,
+   `manufacturer=1`, `product=21553`) et `record.power`/`cadence`/`enhanced_speed`/
+   `ebike_battery_level`/`ebike_travel_range` aux valeurs posées par la sonde.
+3. **Que faire quand le BLE Sigma tombe** : **décidé** — continuer d'émettre les valeurs invalides
+   `0xFF` plutôt que de rendre l'antenne, pour ne pas casser l'appairage côté récepteur.
+4. **Quel ANT-id publier** : **décidé** (D6) — 252 et 253, fixes. Reste à trancher à l'écriture, sans
+   bloquer : la politique de collision si un capteur réel du réseau porte le même (id, device type).
+5. **Le profil *LEV*** : conçu et payé — pages 1/2/3 construites et vérifiées octet par octet, et
+   l'epix les enregistre (`ebike_battery_level`, `ebike_travel_range`, `enhanced_speed`). Les colonnes
+   FIT attendues sont **`ebike_battery_level` (118) et `ebike_travel_range` (117)**, pas
+   `motor_power`/`battery_soc` (absents du dictionnaire comme de l'enregistrement).
+6. `minSdkVersion` : la sonde a tourné avec `minSdkVersion="3.1.0"` sur l'Edge Explore (CIQ 6.0.4) —
+   la valeur du produit convient pour cette cible. Les autres produits restent à vérifier à
+   l'export, comme d'habitude.
+
+## 5bis. Deux acquis qui changent la forme du pont (mesurés, pas devinés)
+
+- **Un récepteur fige au démarrage de son activité ce qu'il enregistre.** À la sortie n° 2, le canal
+  était ouvert et émetteur et l'epix l'a déclaré — sans `serial_number` et sans `power` : les pages
+  d'identification n'étaient pas encore parties. Donc : le pont ouvre ses canaux au démarrage de
+  l'app, **avant** tout enregistrement, et la **première trame après chaque ouverture doit être la
+  page fabricant 0x50, suivie de la page produit 0x51** (la sonde, en décalant sa phase d'une trame,
+  a fait attendre l'identification 2 min 57 s — c'est le `.FIT` qui l'a montré, pas un test).
+- **Le pompage par l'écran ne suffit pas.** Le dessin d'un champ de données s'arrête écran éteint :
+  `PUMP GAP` mesurés jusqu'à 43 s, le canal reste ouvert mais **aucune trame ne part** pendant ce
+  temps. `Toybox.Timer` n'est pas disponible dans une app de champ de données (mesuré : l'app meurt
+  au premier `start()`). Le pont doit être pomé par l'arrivée des trames BLE — celles du produit
+  continuent pendant l'écran éteint (le produit affiche des données à jour au réveil ; à confirmer
+  par compteur sur la première sortie réelle avec le pont).
+
+Deux corrections de mes propres notes, pour que rien ne se répète : `accumulated_power` 80 104 J
+relevé dans un `.FIT` **n'était pas notre compteur** (nous n'avions émis que 59 850 J) — c'est le
+total que le récepteur intègre depuis la puissance instantanée ; le champ cumulé u16 de la page 0x10
+boucle à 65 535 et ce récepteur l'ignore. Et « MD_0015 » n'existe pas dans le profil *Bicycle
+Power* : la source du « au moins 1 fois sur 121 » est la Table 7‑3 (`:1066-1141`, `:2493`).
 
 ---
 
-## 6. La tâche concrète, dans l'ordre
+## 6. La tâche concrète, dans l'ordre (le pont dans `ebike-df`)
 
-**Étape 0 (le plus tôt possible, sur Windows)** : jouer `t1-bikepower/probe-datafield-ant/`
-dans le simulateur. Attendre les lignes affichées : `start`, `channel ok`, `cfg true`,
-`open true`, `tx true`. Un `throw …` ou `cfg false` ferme la question 5.2 pour moins de rien.
+**Étape 0 jouée** : la sonde a tourné sur l'appareil, les questions de conception sont fermées
+(section 5). Les règles complètes à respecter sont celles de la section 5bis plus celles-ci,
+détaillées dans le document de design `~/.opencode/plan/ant-bridge-design.md` §4 — si ce fichier
+n'est pas sous la main, cette section suffit.
 
-**Étape 1** : un module `BpBridge` (nom libre) dans `ebike-df/source/`, calqué sur
-`BpTxChannel` de `t1-bikepower/source/AntBpTest.mc` (lignes 530‑700 pour l'acquisition et
-l'envoi, 1255‑1265 pour le générateur de pages) avec les constantes de la section 2. Les
-valeurs viennent du modèle existant : `source/Sigma.mc:15-25` (`TreadlePower` u16 W aux octets
-6‑7, `Cadence` u8 à l'octet 9 → `model.setPower(...)`, `model.cadenceRpm`), pas d'une rampe.
-Calculer la puissance cumulée en J à partir de la puissance instantanée (intégrale) et faire
-monter l'*update event count* à chaque trame.
-
-**Étape 2** : le **second canal**, *LEV* (device type 20, période **8192**, type de transmission
-0x05, pages 1/2/3/4) pour la vitesse, l'assistance, la batterie et l'autonomie — décidez d'abord
-quelles valeurs du modèle Sigma vont dans quelle page, voir `docs/ANT-PROFILES.md` §3 et §4.
-Ne pas unifier les périodes ni les ids des deux canaux.
-
-**Étape 3** : garder un journal sur l'appareil (section 9) et **vérifier avec un `.FIT`**, pas
-avec l'écran (section 7).
-
-**Étape 4** : une variable par tourne.  Les constantes de conformité de *Bicycle Power*
-(`SPEC_PAGE_10`, `SEND_COMMON_PAGES`, période 8182) sont déjà justes : ne pas les reprendre, et
-ne pas les partager avec le canal *LEV* (période 8192, type de transmission 0x05).
+1. `iq:uses-permission id="Ant"` dans `manifest.xml` (le produit ne l'a pas).
+2. Un module de pont dans `source/` : la **mise en page des pages** et la **machine à états du
+   canal** se reprennent telles quelles de la sonde de banc v0.0.5
+   (`t1-bikepower/probe-datafield-ant/source/Pages.mc`, `MasterChannel.mc` — décodage de
+   `channelClosed` 0x40/7, phase `sinceOpen` avec 0x50 à la trame 0 et 0x51 à la 1, puis une fois
+   par 121 ; deux canaux **indépendants**, périodes 8182/8192 non unifiées, RF 57, réseau privé +
+   clé ANT+ 64 et 128). Les **valeurs** viennent du modèle existant (`Sigma.mc:15-25`,
+   `EbikeData`), pas d'une rampe ; le pompage se fait **à l'arrivée des trames BLE**, jamais sur une
+   horloge d'écran (section 5bis). Cadence = cadence de la donnée (D8, écart au 4 Hz du profil
+   assumé et mesuré sans effet sur l'enregistrement) ; données périmées → `0xFF` sans fermer le
+   canal ; champ cumulé u16 émis avec son wrap de 65 535, sans lui prêter de sens.
+3. Toggle du pont dans `EbikeSettings`, **désactivé par défaut** (D5), chaînes dans les quatre
+   langues (piège n° 19 du `HANDOFF-NOUVELLE-SESSION.md`) ; indicateur d'état (D7) : aucun canal /
+   1 canal / 2 canaux + compteur de reprises.
+4. Journal : transitions de canal et échecs nommés uniquement. **Jamais les rotations de pages** —
+   une rotation n'est pas une transition ; le journal de l'appareil tourne à ~5 ko et perd sa tête.
+5. **Jalon de taille avant d'aller plus loin** : build `enduro` avec `--build-stats 1` sur arbre
+   propre (gen/mir/bin vidés) — le plafond qui compte est **32 768**, pas le « 131 072 available »
+   (piège n° 22) ; marge actuelle du produit : **9 101 B**. Ordre de grandeur connu : la sonde
+   complète (UI + Trace + tests embarqués) fait 10 549 B ; le pont, lui, doit rester sous la marge.
+   Builds `-l 2` sans avertissement sur `edgeexplore` + les cibles du produit.
+6. Sortie réelle avec le FD6D, puis **vérification par `.FIT`** (section 7) : `device_info` nommés
+   aux deux ids, `record.power`/`cadence`, `ebike_battery_level`/`ebike_travel_range`. Toute
+   variation validée sur le vélo avant `git push`, version incrémentée à chaque publication.
 
 ---
 
@@ -252,25 +282,27 @@ secondes UTC depuis 1989‑12‑31.
 
 ## 8. Copier le banc sur Windows, et ce que le simulateur décide (ou pas)
 
-Le banc n'est **pas un dépôt git** : `ebike-sandbox/` est un dossier de travail. À copier sur
-Windows, si tu veux le garder sous la main :
+Le banc `ebike-sandbox/` **est devenu un dépôt git** le 2026‑11‑26 (local, jamais poussé) :
+`C:\Users\greg\git\ebike-sandbox`, base `55f3bca` → `ec2d5a1` et la suite. Son README est le
+carnet chronologique complet. Contenu utile, chemins relatifs à `t1-bikepower/` :
 
 ```
-ebike-sandbox/t1-bikepower/source/AntBpTest.mc     ← la source de référence, v0.0.14
-ebike-sandbox/t1-bikepower/{manifest.xml,monkey.jungle,build.sh,install-edge.sh}
-ebike-sandbox/t1-bikepower/tools/                 ← fitpeek.py, fitfields.py, fitprobe.py, fit-profile-export.py
-ebike-sandbox/t1-bikepower/docs/fit/profile-21.171.json
-ebike-sandbox/t1-bikepower/docs/ant/              ← profils ANT+ Bicycle Power 5.1 et LEV (PDF + texte)
-ebike-sandbox/t1-bikepower/logs/                  ← logs de tournes + le .FIT de la preuve
-ebike-sandbox/t1-bikepower/probe-datafield-ant/   ← la sonde « data field → canal ANT+ »
-ebike-sandbox/t1-bikepower/README.md              ← le carnet complet (chronologique)
+probe-datafield-ant/source/          ← Pages.mc (pages vérifiées octet par octet) et
+                                       MasterChannel.mc (machine à états du canal, v0.0.5) :
+                                       le modèle à reprendre pour le pont
+source/AntBpTest.mc                  ← la watch-app de banc, tx.edgpr = configuration connue bonne
+tools/                               ← fitpeek.py, fitfields.py, fitprobe.py, fit-profile-export.py
+docs/fit/profile-21.171.json         ← dictionnaire FIT (SDK 21.171) utilisé par les outils
+docs/ant/                            ← profils ANT+ Bicycle Power 5.1 et LEV (PDF + texte)
+logs/                                ← logs de tournées + les .FIT de preuve et leurs décodages
+README.md                            ← le carnet complet (chronologique)
 ```
 
-Chemins Linux cités dans ce document : `/media/greg/media/kDrive/git/ebike-df` (dépôt réel),
-`/media/greg/media/kDrive/git/ebike-sandbox/t1-bikepower` (banc),
-`/home/greg/.Garmin/ConnectIQ/Sdks/connectiq-sdk-lin-9.3.0-2026-10-20-95888f262` (SDK).
-Sur Windows : `bin/monkeyc.bat`, `bin/monkeydo.bat`, et le chemin SDK différent — ne pas
-reprendre les commandes Linux telles quelles.
+Chemins actuels (Windows) : `C:\Users\greg\git\ebike-df` (dépôt produit),
+`C:\Users\greg\git\ebike-sandbox\t1-bikepower` (banc),
+`C:\Users\greg\AppData\Roaming\Garmin\ConnectIQ\Sdks\connectiq-sdk-win-9.3.0-2026-10-20-95888f262`
+(SDK ; `bin/monkeyc.bat`, `bin/monkeydo.bat`, `bin/simulator.exe` — le simulateur s'appuie sur le
+port 1234, pas 1200). Les chemins Linux (`/media/greg/media/kDrive/...`) sont historiques.
 
 **Sur le simulateur, sois explicite sur ce qu'il prouve.** Il décide, sans radio : est-ce que le
 code compile pour la cible ; est-ce que les API ANT sont *autorisées* au type d'app (data field /
@@ -323,13 +355,14 @@ l'utilisateur (`gvfsd-mtp`, `pkill -x gvfsd-mtp` si bloqué).
 
 ## 10. Où reprendre, en trois lignes
 
-1. Sur Windows : jouer `probe-datafield-ant/` dans le simulateur → fermer la question 2 de la
-   section 5 (une app de type *data field* peut-elle ouvrir un canal ANT+ maître).
-2. Écrire le porteur ANT+ dans `ebike-df` avec la recette de la section 2 et les valeurs de
-   `Sigma.mc`, en répondant d'abord à la question 1 de la section 5 (montre comme émetteur).
-3. Vérifier avec un `.FIT` (section 7), en comparant `device_info.serial_number`, `product`,
-   `software_version` aux valeurs posées dans les pages 0x50/0x51.
-
-Le banc `t1-bikepower` reste utilisable comme témoin : `tx.edgpr` est la configuration connue
-bonne ; `tx.edgk` (public), `tx.edgpk`/`tx.edgp` (PLUS) et les variantes sans clé sont les
-négatifs documentés. Son README est le détail chronologique ; ce document est l'état.
+1. **Écrire le pont dans `ebike-df`** en suivant la section 6 : plus aucune question ANT+ n'est
+   ouverte. Modèles à reprendre : `Pages.mc` et `MasterChannel.mc` de la sonde v0.0.5 ; valeurs du
+   modèle existant (`EbikeData`, `Sigma.mc`), pompage sur les trames BLE.
+2. **Premier jalon avant toute sortie** : taille `enduro` sur arbre propre (plafond 32 768, marge
+   9 101 B), builds `-l 2` sans avertissement, tests unitaires. Puis sortie réelle avec le FD6D et
+   vérification par `.FIT` (section 7) : `device_info` nommés 252/253, `record.power`/`cadence`,
+   `ebike_*`.
+3. Toute question ANT+ neuve se juge au banc, pas dans le code produit : `tx.edgpr` reste la
+   configuration connue bonne, `tx.df1` le modèle de cycle de vie (pas de cadence), `tx.edgk` /
+   `tx.edgpk` / `tx.edgp` les négatifs documentés. Son README est le détail chronologique ; ce
+   document est l'état.
